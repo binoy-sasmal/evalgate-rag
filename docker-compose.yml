@@ -1,0 +1,78 @@
+# Local development stack.
+#
+#   docker compose up -d db                 # just Postgres/pgvector
+#   docker compose up -d                    # + the API
+#   docker compose --profile tracing up -d  # + self-hosted Langfuse (v2, single container)
+#
+# Langfuse note: v2 runs as one container against Postgres (perfect for a demo).
+# Langfuse v3 needs ClickHouse/Redis/MinIO — use their official compose if you
+# want v3: https://langfuse.com/self-hosting/docker-compose
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB__HOST: db
+      DB__PORT: "5432"
+      DB__USER: rag
+      DB__PASSWORD: rag
+      DB__NAME: rag
+      LLM__BASE_URL: ${LLM__BASE_URL:-https://api.openai.com/v1}
+      LLM__API_KEY: ${LLM__API_KEY:?set in .env}
+      LLM__MODEL: ${LLM__MODEL:-gpt-4o-mini}
+      EMBEDDING__PROVIDER: ${EMBEDDING__PROVIDER:-openai}
+      EMBEDDING__API_KEY: ${EMBEDDING__API_KEY:-${LLM__API_KEY:-}}
+      LANGFUSE__ENABLED: ${LANGFUSE__ENABLED:-false}
+      LANGFUSE__HOST: http://langfuse:3000
+      LANGFUSE__PUBLIC_KEY: ${LANGFUSE__PUBLIC_KEY:-}
+      LANGFUSE__SECRET_KEY: ${LANGFUSE__SECRET_KEY:-}
+    ports:
+      - "8000:8000"
+
+  # ---- optional tracing profile -----------------------------------------
+  langfuse-db:
+    profiles: ["tracing"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - lfdata:/var/lib/postgresql/data
+
+  langfuse:
+    profiles: ["tracing"]
+    image: langfuse/langfuse:2
+    depends_on:
+      - langfuse-db
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: changeme-nextauth-secret
+      SALT: changeme-salt
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  lfdata:

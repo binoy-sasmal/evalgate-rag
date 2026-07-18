@@ -1,0 +1,40 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.Python
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Secrets ---
+.env
+
+# --- Generated/fetched data (reproducible via scripts/, never hand-curated) ---
+data/corpus/
+data/eu_ai_act_raw.html
+data/eu_ai_act_raw_files/
+data/golden_set_candidates.jsonl
+
+# --- Eval run artifacts (see CLAUDE.md: never hand-edit these) ---
+eval/results.json
+eval/.cache/
+
+# --- IDE / OS cruft ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

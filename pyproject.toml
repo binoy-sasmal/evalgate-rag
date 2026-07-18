@@ -1,0 +1,58 @@
+[project]
+name = "evalgate-rag"
+version = "0.1.0"
+description = "Eval-gated hybrid RAG service over the EU AI Act — FastAPI + pgvector + Langfuse + Ragas, with a CI gate that fails on metric regression"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3",
+    "rank-bm25>=0.2.2",
+    "numpy>=1.26",
+    "beautifulsoup4>=4.12",
+    "langfuse>=2.53",
+]
+
+[project.optional-dependencies]
+eval = [
+    "ragas>=0.2.6,<0.3",
+    "langchain-openai>=0.2,<0.3",
+    "langchain-community>=0.3,<0.4",  # ragas 0.2.x's LLM factory imports from here
+    "datasets>=2.20",
+]
+embed-local = [
+    "fastembed>=0.3",          # ONNX BGE embeddings, no torch needed
+]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/evalgate_rag"]
