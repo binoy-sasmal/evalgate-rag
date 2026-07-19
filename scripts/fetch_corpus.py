@@ -72,7 +72,9 @@ def main() -> None:
     docs = split_documents(fetch_html())
     for doc in docs:
         safe = doc["doc_id"].replace(" ", "_").lower()
-        (OUT_DIR / f"{safe}.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2))
+        (OUT_DIR / f"{safe}.json").write_text(
+            json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     print(f"Wrote {len(docs)} documents to {OUT_DIR}/")
 
 

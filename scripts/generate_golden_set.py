@@ -47,16 +47,16 @@ def main() -> None:
 
     existing = {
         json.loads(ln)["gold_doc_id"]
-        for ln in pathlib.Path("data/golden_set.jsonl").read_text().splitlines()
+        for ln in pathlib.Path("data/golden_set.jsonl").read_text(encoding="utf-8").splitlines()
         if ln.strip()
     }
 
     written = 0
-    with OUT.open("w") as fh:
+    with OUT.open("w", encoding="utf-8") as fh:
         for path in docs:
             if written >= args.n:
                 break
-            doc = json.loads(path.read_text())
+            doc = json.loads(path.read_text(encoding="utf-8"))
             if doc["doc_id"] in existing:
                 continue  # prefer coverage of articles not yet in the golden set
             raw = llm.chat(

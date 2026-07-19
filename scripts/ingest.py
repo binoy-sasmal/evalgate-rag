@@ -31,7 +31,7 @@ def main() -> None:
 
     total = 0
     for path in sorted(CORPUS_DIR.glob("*.json")):
-        doc = json.loads(path.read_text())
+        doc = json.loads(path.read_text(encoding="utf-8"))
         if args.strategy == "fixed":
             chunks = chunk_fixed(doc["text"], doc["doc_id"])
         elif args.strategy == "recursive":

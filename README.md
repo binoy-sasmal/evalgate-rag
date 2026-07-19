@@ -105,6 +105,23 @@ provider, or `golden_set.jsonl` changes; pass `--fresh` to force a clean run
 outright (needed after a corpus re-ingest or chunking-strategy change, since
 that state lives in Postgres and isn't visible to this script).
 
+## UI
+
+A minimal Streamlit client for interacting with the API — a question box, a
+`top_k` slider, the answer, and the retrieved contexts (each chunk's `doc_id`,
+`seq`, `score`, and text, expandable) so hybrid retrieval and citations are
+visible. It hits `/health` on load and degrades gracefully when the API is
+unreachable or the LLM backend is rate-limited (a 502 from `/query`).
+
+```bash
+pip install -e .[ui]                       # streamlit; reuses core httpx
+uvicorn evalgate_rag.api:app --reload      # the API, in one terminal
+streamlit run ui/app.py                    # this UI, in another
+```
+
+The base URL defaults to `http://localhost:8000`; override it with the
+`EVALGATE_API_URL` env var or the sidebar field.
+
 ## Chunking benchmark
 
 Three strategies over the same corpus, scored on whether the gold article is

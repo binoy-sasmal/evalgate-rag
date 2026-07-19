@@ -32,14 +32,15 @@ TOP_K = 4
 
 
 def load_golden() -> list[dict]:
-    return [json.loads(ln) for ln in GOLDEN_SET.read_text().splitlines() if ln.strip()]
+    lines = GOLDEN_SET.read_text(encoding="utf-8").splitlines()
+    return [json.loads(ln) for ln in lines if ln.strip()]
 
 
 def build_index(strategy: str, embedder) -> HybridRetriever:
     store = InMemoryStore()
     n = 0
     for path in sorted(CORPUS_DIR.glob("*.json")):
-        doc = json.loads(path.read_text())
+        doc = json.loads(path.read_text(encoding="utf-8"))
         if strategy == "fixed":
             chunks = chunk_fixed(doc["text"], doc["doc_id"])
         elif strategy == "recursive":
