@@ -26,12 +26,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import math
 import pathlib
 import statistics
 import sys
+import time
 
 from evalgate_rag.config import Settings, get_settings
 from evalgate_rag.embeddings import FastEmbedEmbedder, make_embedder
@@ -59,16 +61,33 @@ JUDGE_MAX_WORKERS = 1
 # instead of just going quiet for minutes.
 JUDGE_TIMEOUT_S = 300
 
-# Kept deliberately small. A prior full-eval run hit Groq's *daily* token
-# quota (100K TPD) partway through judging — a hard cap that doesn't clear on
-# retry — and each RateLimitError's suggested wait (13-33 min) got retried by
-# BOTH the OpenAI SDK's own client-level retries and Ragas' tenacity wrapper
-# on top, stacking into a run that was still retrying after 59+ hours.
-# ChatOpenAI(max_retries=0) below removes the SDK-level layer entirely, so
-# these two numbers are the only retry budget — worst case a few minutes per
-# job, not hours, if the same wall gets hit again.
-JUDGE_MAX_RETRIES = 3
-JUDGE_MAX_WAIT_S = 30
+# A prior full-eval run hit Groq's *daily* token quota (100K TPD) partway
+# through judging — a hard cap that doesn't clear on retry — and each
+# RateLimitError's suggested wait (13-33 min) got retried by BOTH the OpenAI
+# SDK's own client-level retries and Ragas' tenacity wrapper on top, stacking
+# into a run that was still retrying after 59+ hours. ChatOpenAI(max_retries=0)
+# below removes the SDK-level layer entirely, so these two numbers are the
+# only retry budget for a single call.
+#
+# They're not the main defense against 429s, though: Ragas' tenacity retry
+# uses its own exponential+jitter backoff and never reads Groq's suggested
+# `retry-after` wait, and max_workers=1 only limits *concurrency*, not
+# *rate* — Ragas fires the next job the instant the last one returns, so it
+# hammers the endpoint back-to-back and pins TPM near the ceiling for the
+# whole judging phase. A run against the 20-question golden set saw usage
+# sit at 10-11.7K/12K TPM continuously, and most jobs 429'd on their first
+# attempt with too few retries left to land in a freed-up window — silently
+# dropping ~75-90% of (question, metric) pairs as NaN. JUDGE_MIN_INTERVAL_S
+# (applied per physical LLM call via ThrottledChatOpenAI below) is the real
+# fix; these two are a secondary safety net for the occasional blip.
+JUDGE_MAX_RETRIES = 6
+JUDGE_MAX_WAIT_S = 45
+
+# Minimum seconds between judge LLM calls (see comment above) — chosen so
+# that even the larger observed requests (~2-2.6K tokens) stay comfortably
+# under Groq's 12K TPM cap: 12000 / 8s-per-call * 60s ≈ 1 request every 8s
+# supports ~1.5K tokens/request sustained, close to but under the ceiling.
+JUDGE_MIN_INTERVAL_S = 8.0
 
 
 def build_pipeline() -> RAGPipeline:
@@ -131,6 +150,7 @@ def main() -> None:
     from datasets import Dataset
     from langchain_core.embeddings import Embeddings
     from langchain_openai import ChatOpenAI
+    from pydantic import PrivateAttr
     from ragas import evaluate
     from ragas.metrics import answer_relevancy, context_precision, faithfulness
     from ragas.run_config import RunConfig
@@ -146,6 +166,28 @@ def main() -> None:
 
         def embed_query(self, text: str) -> list[float]:
             return self._embedder.embed([text])[0].tolist()
+
+    class ThrottledChatOpenAI(ChatOpenAI):
+        """Enforces a minimum delay between calls at the actual LLM-call
+        boundary, so Ragas can't hammer the judge endpoint back-to-back and
+        pin TPM at the ceiling regardless of how many metrics/sub-calls fan
+        out per row (see JUDGE_MIN_INTERVAL_S comment)."""
+
+        _min_interval_s: float = PrivateAttr(default=0.0)
+        _last_call_at: float | None = PrivateAttr(default=None)
+
+        def __init__(self, *, min_interval_s: float = 0.0, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            self._min_interval_s = min_interval_s
+
+        async def _agenerate(self, *args: object, **kwargs: object):  # type: ignore[override]
+            if self._min_interval_s > 0:
+                if self._last_call_at is not None:
+                    remaining = self._min_interval_s - (time.monotonic() - self._last_call_at)
+                    if remaining > 0:
+                        await asyncio.sleep(remaining)
+                self._last_call_at = time.monotonic()
+            return await super()._agenerate(*args, **kwargs)
 
     golden_raw = GOLDEN_SET.read_text()
     golden = [json.loads(ln) for ln in golden_raw.splitlines() if ln.strip()]
@@ -183,12 +225,13 @@ def main() -> None:
             }
         )
 
-    judge_llm = ChatOpenAI(
+    judge_llm = ThrottledChatOpenAI(
         model=cfg.llm.model,
         api_key=cfg.llm.api_key,
         base_url=cfg.llm.base_url,
         temperature=0,
         max_retries=0,  # let Ragas' RunConfig be the only retry layer, not this too
+        min_interval_s=JUDGE_MIN_INTERVAL_S,
     )
     judge_emb = RagasFastEmbedEmbeddings(FastEmbedEmbedder())
     run_config = RunConfig(
@@ -228,6 +271,11 @@ def main() -> None:
     for metric_name in METRIC_NAMES:
         scored = [judge_cache[r["id"]] for r in rows if metric_name in judge_cache.get(r["id"], {})]
         values = [s[metric_name] for s in scored]
+        # Sample count alongside each metric: n_questions alone can't tell you
+        # whether an average reflects all 20 questions or a handful of
+        # survivors after most judge calls got dropped as NaN under TPM
+        # pressure -- a gap that made a 3-sample fluke look like a real score.
+        metrics[f"{metric_name}_n"] = len(values)
         if values:
             metrics[metric_name] = round(statistics.fmean(values), 4)
         else:
