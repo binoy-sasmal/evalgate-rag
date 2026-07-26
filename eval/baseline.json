@@ -1,6 +1,6 @@
 {
-  "faithfulness": 0.85,
-  "answer_relevancy": 0.80,
-  "context_precision": 0.75,
-  "_comment": "Update via `python eval/check_regression.py --promote` after an intentional, reviewed improvement. Initial values are placeholders — replace with your first real run."
+  "faithfulness": 0.9121,
+  "answer_relevancy": 0.8424,
+  "context_precision": 0.7958,
+  "_comment": "Promoted from eval/results.json"
 }
