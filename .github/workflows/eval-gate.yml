@@ -42,7 +42,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e .[dev,eval]
+      - run: pip install -e .[dev,eval,embed-local]
 
       - name: Restore cached corpus
         id: corpus-cache
@@ -58,15 +58,14 @@ jobs:
       - name: Ingest corpus into pgvector
         env:
           DB__HOST: localhost
-          EMBEDDING__PROVIDER: openai
-          EMBEDDING__API_KEY: ${{ secrets.LLM_API_KEY }}
+          EMBEDDING__PROVIDER: fastembed
         run: python scripts/ingest.py --strategy recursive
 
       - name: Run Ragas evaluation
         env:
           DB__HOST: localhost
           LLM__API_KEY: ${{ secrets.LLM_API_KEY }}
-          EMBEDDING__API_KEY: ${{ secrets.LLM_API_KEY }}
+          EMBEDDING__PROVIDER: fastembed
         run: python eval/run_eval.py --out eval/results.json
 
       - name: Eval gate — fail on regression

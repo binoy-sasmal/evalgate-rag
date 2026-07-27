@@ -22,18 +22,26 @@ class DBSettings(BaseModel):
 
 class LLMSettings(BaseModel):
     """Any OpenAI-compatible endpoint: OpenAI, Azure OpenAI (via proxy),
-    Groq, Ollama (http://localhost:11434/v1), vLLM, LiteLLM gateway."""
+    Groq, Ollama (http://localhost:11434/v1), vLLM, LiteLLM gateway.
 
-    base_url: str = "https://api.openai.com/v1"
+    Defaults to Groq's free tier, since that's this project's default setup
+    (see README's "LLM" section) -- override via LLM__* env vars for any
+    other OpenAI-compatible provider.
+    """
+
+    base_url: str = "https://api.groq.com/openai/v1"
     api_key: str = "unset"
-    model: str = "gpt-4o-mini"
+    model: str = "llama-3.3-70b-versatile"
     temperature: float = 0.0
     timeout_s: float = 60.0
     min_interval_s: float = 0.0  # throttle between requests, e.g. to stay under a TPM cap
 
 
 class EmbeddingSettings(BaseModel):
-    provider: str = "openai"  # "openai" | "fastembed" | "hash" (tests only)
+    """Defaults to local fastembed, since Groq (the default LLM provider
+    above) has no embeddings endpoint."""
+
+    provider: str = "fastembed"  # "openai" | "fastembed" | "hash" (tests only)
     base_url: str = "https://api.openai.com/v1"
     api_key: str = "unset"
     model: str = "text-embedding-3-small"
