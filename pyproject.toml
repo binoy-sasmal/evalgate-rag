@@ -49,7 +49,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"  # matches CI/Docker's interpreter; newer numpy stubs need 3.12+ syntax
 strict = false
 ignore_missing_imports = true
 
