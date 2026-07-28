@@ -31,17 +31,23 @@ class HybridRetriever:
         self._rrf_k = rrf_k
         self._bm25: BM25Okapi | None = None
         self._bm25_chunks: list[Chunk] = []
+        self._bm25_built = False
 
     def refresh_bm25(self) -> None:
         """(Re)build the in-process BM25 index from the store. Call after ingest."""
         self._bm25_chunks = self._store.all_chunks()
-        corpus = [_tokenise(c.text) for c in self._bm25_chunks] or [["empty"]]
-        self._bm25 = BM25Okapi(corpus)
+        # An empty store means no BM25 results, not a fake single-doc index --
+        # BM25Okapi's score array must line up 1:1 with _bm25_chunks below.
+        self._bm25 = (
+            BM25Okapi([_tokenise(c.text) for c in self._bm25_chunks]) if self._bm25_chunks else None
+        )
+        self._bm25_built = True
 
     def _bm25_search(self, query: str, top_k: int) -> list[ScoredChunk]:
-        if self._bm25 is None:
+        if not self._bm25_built:
             self.refresh_bm25()
-        assert self._bm25 is not None
+        if self._bm25 is None:
+            return []
         scores = self._bm25.get_scores(_tokenise(query))
         ranked = sorted(zip(self._bm25_chunks, scores, strict=True), key=lambda t: -t[1])[:top_k]
         return [ScoredChunk(c, float(s)) for c, s in ranked if s > 0]

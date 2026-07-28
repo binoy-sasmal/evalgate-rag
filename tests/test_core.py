@@ -88,6 +88,16 @@ def test_rrf_scores_are_descending():
     assert scores == sorted(scores, reverse=True)
 
 
+def test_hybrid_retrieval_on_empty_store_returns_no_results():
+    # A store with nothing ingested yet (fresh deployment, failed ingest) must
+    # degrade to an empty result, not crash -- BM25Okapi's fallback empty-doc
+    # index used to leave self._bm25_chunks (len 0) out of sync with its score
+    # array (len 1), raising ValueError in zip(..., strict=True).
+    retriever = HybridRetriever(InMemoryStore(), HashEmbedder())
+    retriever.refresh_bm25()
+    assert retriever.retrieve("anything", top_k=4) == []
+
+
 # --------------------------------------------------------------------- api
 
 
