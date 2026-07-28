@@ -25,7 +25,15 @@ eval = [
     "datasets>=2.20",
 ]
 embed-local = [
-    "fastembed>=0.3",          # ONNX BGE embeddings, no torch needed
+    # Exact-pinned: the eval gate compares scores against a stored baseline
+    # over time, so the embedding model's numerical output has to be stable
+    # run-to-run. fastembed itself is version-stable here, but its inference
+    # engine (onnxruntime) isn't -- an unpinned resolve went from 1.18.1 to
+    # 1.28.0 between when the baseline was set and a CI run days later,
+    # which is enough to shift retrieval and, through it, judged scores like
+    # faithfulness without any change to our code, prompts, or retrieval logic.
+    "fastembed==0.8.0",        # ONNX BGE embeddings, no torch needed
+    "onnxruntime==1.18.1",     # fastembed's inference engine -- pin transitively too
 ]
 ui = [
     "streamlit>=1.36",         # demo UI client; reuses core httpx for API calls
