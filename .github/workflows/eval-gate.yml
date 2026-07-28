@@ -61,6 +61,21 @@ jobs:
           EMBEDDING__PROVIDER: fastembed
         run: python scripts/ingest.py --strategy recursive
 
+      # Restores the most recent eval/.cache/ (generated answers + judge
+      # scores) so a run that gets cut short by Groq's daily token quota
+      # doesn't lose that progress -- the next triggered run picks up where
+      # it left off, same as re-running the script locally. Always saves
+      # under a fresh key (run_eval.py's own fingerprint check guards
+      # against reusing stale cache across a real prompt/model/config
+      # change, same as it does locally).
+      - name: Restore eval progress cache
+        uses: actions/cache@v4
+        with:
+          path: eval/.cache
+          key: eval-progress-${{ github.run_id }}
+          restore-keys: |
+            eval-progress-
+
       - name: Run Ragas evaluation
         env:
           DB__HOST: localhost
