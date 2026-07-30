@@ -13,12 +13,19 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import sys
 
 import httpx
 from bs4 import BeautifulSoup
 
 EURLEX_URL = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32024R1689"
 OUT_DIR = pathlib.Path("data/corpus")
+
+# The consolidated Act yields ~125 article/annex documents. A fetch that
+# parses far fewer means we got something other than the Act -- most often a
+# WAF/consent challenge page that still returns HTTP 200, so raise_for_status()
+# doesn't catch it. Refuse to overwrite a good committed corpus with garbage.
+MIN_DOCS = 50
 
 ARTICLE_RE = re.compile(r"^Article\s+(\d+[a-z]?)\b", re.IGNORECASE)
 ANNEX_RE = re.compile(r"^ANNEX\s+([IVXL]+)\b", re.IGNORECASE)
@@ -68,8 +75,16 @@ def split_documents(html: str) -> list[dict]:
 
 
 def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
     docs = split_documents(fetch_html())
+    if len(docs) < MIN_DOCS:
+        print(
+            f"ERROR: parsed only {len(docs)} documents (expected >= {MIN_DOCS}). "
+            "EUR-Lex likely returned a WAF/consent page instead of the Act. "
+            "Leaving the existing data/corpus/ untouched.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     for doc in docs:
         safe = doc["doc_id"].replace(" ", "_").lower()
         (OUT_DIR / f"{safe}.json").write_text(

@@ -44,6 +44,13 @@ from evalgate_rag.store import PgVectorStore
 GOLDEN_SET = pathlib.Path("data/golden_set.jsonl")
 METRIC_NAMES = ("faithfulness", "answer_relevancy", "context_precision")
 
+# Refuse to evaluate against an empty/near-empty store. Retrieval degrades
+# silently to no context on an empty store (by design -- see HybridRetriever),
+# so every context-grounded metric floors out and the run looks like a huge
+# regression when the real cause is a missing corpus / failed ingest. Catch it
+# here before we burn tokens answering 20 questions with no grounding.
+MIN_STORE_CHUNKS = 50
+
 CACHE_DIR = pathlib.Path("eval/.cache")
 ANSWERS_CACHE = CACHE_DIR / "answers.json"
 SCORES_CACHE = CACHE_DIR / "judge_scores.json"
@@ -90,10 +97,24 @@ JUDGE_MAX_WAIT_S = 45
 JUDGE_MIN_INTERVAL_S = 8.0
 
 
+def require_populated_store(n_chunks: int, min_chunks: int = MIN_STORE_CHUNKS) -> None:
+    """Exit(1) if the store holds fewer than min_chunks chunks. Pulled out as a
+    pure function so the guard is unit-testable without a live database."""
+    if n_chunks < min_chunks:
+        print(
+            f"ERROR: store has only {n_chunks} chunks (expected >= {min_chunks}) -- corpus is "
+            "missing or ingest failed. Run scripts/ingest.py against a populated data/corpus/ "
+            "before evaluating; refusing to eval against an empty store.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def build_pipeline() -> RAGPipeline:
     cfg = get_settings()
     embedder = make_embedder(cfg.embedding)
     store = PgVectorStore(cfg.db.dsn, dimension=embedder.dimension)
+    require_populated_store(len(store.all_chunks()))
     retriever = HybridRetriever(store, embedder, rrf_k=cfg.rrf_k)
     retriever.refresh_bm25()
     return RAGPipeline(retriever, LLMClient(cfg.llm), Tracer(cfg.langfuse), cfg.retrieval_top_k)

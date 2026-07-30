@@ -44,17 +44,11 @@ jobs:
           cache: pip
       - run: pip install -e .[dev,eval,embed-local]
 
-      - name: Restore cached corpus
-        id: corpus-cache
-        uses: actions/cache@v4
-        with:
-          path: data/corpus
-          key: eu-ai-act-corpus-v1
-
-      - name: Fetch corpus (cache miss)
-        if: steps.corpus-cache.outputs.cache-hit != 'true'
-        run: python scripts/fetch_corpus.py
-
+      # The corpus is committed to the repo (data/corpus/), so it arrives with
+      # checkout -- no live fetch. EUR-Lex's WAF blocks fetch_corpus.py from CI
+      # runners, and the corpus is the fixed substrate the eval baseline is
+      # measured against, so it must be a stable versioned artifact. Refresh it
+      # locally with scripts/fetch_corpus.py when the Act is amended.
       - name: Ingest corpus into pgvector
         env:
           DB__HOST: localhost
@@ -68,13 +62,18 @@ jobs:
       # under a fresh key (run_eval.py's own fingerprint check guards
       # against reusing stale cache across a real prompt/model/config
       # change, same as it does locally).
+      # Prefix bumped v1 -> v2 to abandon the earlier lineage: it accumulated
+      # judge scores/answers produced against an EMPTY store (a broken corpus
+      # fetch), and run_eval's fingerprint can't see corpus/store state, so
+      # those poisoned entries would otherwise be restored as "valid" and
+      # replayed. v2 starts clean against the now-committed corpus.
       - name: Restore eval progress cache
         uses: actions/cache@v4
         with:
           path: eval/.cache
-          key: eval-progress-${{ github.run_id }}
+          key: eval-progress-v2-${{ github.run_id }}
           restore-keys: |
-            eval-progress-
+            eval-progress-v2-
 
       - name: Run Ragas evaluation
         env:

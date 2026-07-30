@@ -22,8 +22,11 @@ htmlcov/
 # --- Secrets ---
 .env
 
-# --- Generated/fetched data (reproducible via scripts/, never hand-curated) ---
-data/corpus/
+# --- Fetch intermediates (reproducible via scripts/, never hand-curated) ---
+# NOTE: data/corpus/ is deliberately committed, not ignored. EUR-Lex's WAF
+# blocks the live fetch from CI runners, and the corpus is the fixed substrate
+# the eval baseline is measured against -- it must be a stable, versioned
+# artifact, not re-fetched live. Refresh it with scripts/fetch_corpus.py.
 data/eu_ai_act_raw.html
 data/eu_ai_act_raw_files/
 data/golden_set_candidates.jsonl
