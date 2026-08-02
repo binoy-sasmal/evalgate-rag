@@ -1,6 +1,6 @@
 {
-  "faithfulness": 0.9121,
-  "answer_relevancy": 0.8424,
-  "context_precision": 0.7958,
+  "faithfulness": 0.8923,
+  "answer_relevancy": 0.809,
+  "context_precision": 0.7892,
   "_comment": "Promoted from eval/results.json"
 }
