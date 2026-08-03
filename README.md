@@ -36,6 +36,10 @@ main ──▶ ci.yml: lint/type/unit/integration ──▶ Docker build ──�
     └──▶ eval-gate.yml: the Ragas gate above also runs on every push to main
 ```
 
+![The eval gate in GitHub Actions: each Ragas metric compared to eval/baseline.json with its sample count. This run passes; any metric regressing beyond the 0.03 tolerance turns the build red.](assets/eval-gate.png)
+
+<sub>The eval gate on a real run — `faithfulness`, `answer_relevancy`, and `context_precision` each vs the committed baseline, with sample counts. The build fails on any regression beyond tolerance.</sub>
+
 ## Quickstart
 
 ```bash
@@ -116,6 +120,8 @@ A minimal Streamlit client for interacting with the API — a question box, a
 `seq`, `score`, and text, expandable) so hybrid retrieval and citations are
 visible. It hits `/health` on load and degrades gracefully when the API is
 unreachable or the LLM backend is rate-limited (a 502 from `/query`).
+
+![The Streamlit UI answering a question about GPAI systemic risk: the grounded answer cites Article 51 (the 10^25 FLOP threshold), with the retrieved contexts listed below and an "API reachable" status.](assets/streamlit-ui.png)
 
 ```bash
 pip install -e .[ui]                       # streamlit; reuses core httpx
