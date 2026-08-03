@@ -14,7 +14,11 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "numpy>=1.26",
     "beautifulsoup4>=4.12",
-    "langfuse>=2.53",
+    # Pin to v2: the Tracer uses the v2 SDK API (langfuse.trace(...)/.span/
+    # .generation), which v3+ removed, and the self-hosted server in
+    # docker-compose is Langfuse v2 (v3 SDK needs a v3 server w/ ClickHouse).
+    # SDK major must match the server major.
+    "langfuse>=2.53,<3",
 ]
 
 [project.optional-dependencies]
