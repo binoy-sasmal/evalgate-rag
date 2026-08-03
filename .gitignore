@@ -41,3 +41,6 @@ eval/.cache/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# --- Agent tooling (local Claude Code config) ---
+.claude/
