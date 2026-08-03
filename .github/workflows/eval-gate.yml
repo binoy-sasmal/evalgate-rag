@@ -12,6 +12,14 @@ name: Eval Gate
 on:
   push:
     branches: [main]
+    # Docs-only pushes can't change any eval metric, so skip the (token-heavy,
+    # 100K-TPD-bound) gate for them. A mixed commit that also touches code
+    # still runs, since paths-ignore only skips when *every* changed file
+    # matches. workflow_dispatch below always forces a run when needed.
+    paths-ignore:
+      - '**/*.md'
+      - 'assets/**'
+      - 'LICENSE'
   pull_request:
     types: [labeled, synchronize]
   workflow_dispatch:
