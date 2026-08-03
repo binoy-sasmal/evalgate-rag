@@ -14,7 +14,7 @@ if faithfulness, answer relevancy, or context precision regress** beyond toleran
 | Store | PostgreSQL 16 + pgvector (HNSW index) |
 | Observability | Langfuse tracing on every query (self-hosted via compose profile) |
 | Evaluation | Ragas: faithfulness · answer relevancy · context precision |
-| CI/CD | GitHub Actions: lint → types → unit tests → pgvector integration tests → **eval gate** → Docker build → push to GHCR |
+| CI/CD | GitHub Actions — `ci.yml` (lint · types · unit · pgvector integration · Docker build → GHCR) plus a separate **`eval-gate.yml`** (the Ragas gate) |
 | LLM | Any OpenAI-compatible endpoint (default: **Groq free tier**, `llama-3.3-70b-versatile`) |
 | Embeddings | Local, offline via **fastembed** (BAAI/bge-small-en-v1.5, 384-dim) — Groq has no embeddings API |
 
@@ -32,7 +32,8 @@ PR opened ──▶ lint/type/unit ──▶ pgvector integration ──▶ [lab
                                                               │
                                     delta vs eval/baseline.json > −0.03 ? ──▶ ❌ build fails
                                                               │
-main ──▶ all of the above ──▶ Docker build ──▶ push ghcr.io/…:sha
+main ──▶ ci.yml: lint/type/unit/integration ──▶ Docker build ──▶ push ghcr.io/…:sha
+    └──▶ eval-gate.yml: the Ragas gate above also runs on every push to main
 ```
 
 ## Quickstart
@@ -42,7 +43,8 @@ cp .env.example .env                      # add your Groq API key (console.groq.
 docker compose up -d db                   # Postgres + pgvector
 pip install -e .[dev,embed-local]         # embed-local pulls fastembed (local, offline)
 
-python scripts/fetch_corpus.py            # EU AI Act from EUR-Lex → data/corpus/
+# the EU AI Act corpus ships in the repo (data/corpus/) — no fetch needed.
+# (to refresh it from EUR-Lex later: python scripts/fetch_corpus.py)
 python scripts/ingest.py --strategy recursive
 uvicorn evalgate_rag.api:app --reload
 
@@ -99,8 +101,10 @@ sequentially — parallel judge calls would blow through the RPM/TPM caps.
 **The run is resumable.** Generated answers and judge scores are cached to
 `eval/.cache/` as they're produced (per question, and per question+metric for
 judge scores), so a run that dies partway through — a real risk against a
-100K/day budget — doesn't redo work that already succeeded on rerun. The
-cache auto-invalidates if the prompt, model, `retrieval_top_k`, embedding
+100K/day budget — doesn't redo work that already succeeded on rerun. In CI the
+cache is persisted across runs (saved even when the gate fails on a partial),
+so successive triggers accumulate toward a full sample across the daily budget.
+The cache auto-invalidates if the prompt, model, `retrieval_top_k`, embedding
 provider, or `golden_set.jsonl` changes; pass `--fresh` to force a clean run
 outright (needed after a corpus re-ingest or chunking-strategy change, since
 that state lives in Postgres and isn't visible to this script).
@@ -170,15 +174,18 @@ This repository is built agent-first, and the workflow is part of the design:
 src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · api
 scripts/              fetch_corpus · ingest · benchmark_chunking · generate_golden_set
 eval/                 run_eval (Ragas) · check_regression (the gate) · baseline.json
-data/                 golden_set.jsonl · corpus/ (generated)
+data/                 golden_set.jsonl · corpus/ (EU AI Act, committed)
 tests/                offline unit tests + pgvector integration tests
 .github/workflows/    ci.yml · eval-gate.yml
 ```
 
 ## Notes
 
-- Corpus: the consolidated EU AI Act text from EUR-Lex (public). ~110 articles +
-  annexes ≈ 200 documents after splitting.
+- Corpus: the consolidated EU AI Act text from EUR-Lex (public), split into 125
+  article/annex documents. It's **committed to the repo** (`data/corpus/`), not
+  fetched at build time — the eval baseline is measured against it, so it has to
+  be a stable, versioned artifact (and EUR-Lex's WAF blocks the live fetch from
+  CI runners anyway). Refresh it with `scripts/fetch_corpus.py`.
 - The Docker image runs as a non-root user with a healthcheck; compose ships a
   `tracing` profile with single-container Langfuse v2 (v3 needs ClickHouse —
   see their official compose).
