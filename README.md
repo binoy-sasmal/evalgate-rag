@@ -61,6 +61,8 @@ With tracing: `docker compose --profile tracing up -d`, open Langfuse at
 Every query then produces a trace with a retrieval span (chunk IDs + scores) and
 a generation span.
 
+![A Langfuse trace for one query: the retrieval span (input question, output chunks with doc_id and score) and the generation span, shown in the trace tree.](assets/langfuse-trace.png)
+
 ## LLM
 
 Default configuration runs generation and Ragas judging on **Groq's free tier**
