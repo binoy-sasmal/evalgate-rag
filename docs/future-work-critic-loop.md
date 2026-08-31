@@ -95,26 +95,33 @@ class TokenUsage(TypedDict):
     prompt_tokens: int
     completion_tokens: int
 
-class CriticVerdict(BaseModel):          # pydantic, extra="forbid"
+
+class CriticVerdict(BaseModel):
+    """Configured with extra="forbid"; confidence is Field(ge=0.0, le=1.0)."""
+
     grounded: bool
     unsupported_claims: list[str]
-    confidence: float                     # Field(ge=0.0, le=1.0)
+    confidence: float
+
 
 class CriticState(TypedDict, total=False):
-    question: str                         # input
-    top_k: int                            # input
-    contexts: list[ScoredChunk]           # retrieve →
-    context_block: str                    # retrieve →
-    draft_answer: str                     # generate →
-    generate_usage: TokenUsage | None     # generate →
-    verdict: CriticVerdict | None         # critique →
-    critic_raw: str                       # critique →  (raw text, for audit)
-    critic_usage: TokenUsage | None       # critique →
-    answer: str                           # accept | abstain →
-    accepted: bool                        # accept | abstain →
-    abstained: bool                       # accept | abstain →
-    timings_ms: dict[str, float]          # every node appends its own key
+    question: str
+    top_k: int
+    contexts: list[ScoredChunk]
+    context_block: str
+    draft_answer: str
+    generate_usage: TokenUsage | None
+    verdict: CriticVerdict | None
+    critic_raw: str
+    critic_usage: TokenUsage | None
+    answer: str
+    accepted: bool
+    abstained: bool
+    timings_ms: dict[str, float]
 ```
+
+`question` and `top_k` are the graph's inputs; `critic_raw` is the critic's raw
+response text, kept for audit. Every other field is owned by exactly one node:
 
 | Node | Reads | Writes |
 |---|---|---|

@@ -45,7 +45,13 @@ ui = [
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
-    "ruff>=0.5",
+    # Minor-bounded: ruff holds formatter output stable within a minor but not
+    # across one, so an unpinned `>=` lets CI red the build on code nobody
+    # touched. 0.16 did exactly that -- it began formatting Python code blocks
+    # inside Markdown, so a docs-only commit failed `ruff format --check .`
+    # against a CI-resolved 0.16 while a local 0.15 still reported clean.
+    # Bump the bound deliberately, so the reformat lands in its own reviewed diff.
+    "ruff>=0.16,<0.17",
     "mypy>=1.10",
 ]
 
