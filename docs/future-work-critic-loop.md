@@ -470,3 +470,4 @@ result is worth more than a bullet the numbers don't support.
   span with the verdict as span output.
 - `python eval/check_regression.py` against a linear-arm run — must reproduce today's
   pass with `eval/baseline.json` unmodified.
+  
