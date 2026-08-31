@@ -15,7 +15,7 @@ if faithfulness, answer relevancy, or context precision regress** beyond toleran
 | Observability | Langfuse tracing on every query (self-hosted via compose profile) |
 | Evaluation | Ragas: faithfulness · answer relevancy · context precision |
 | CI/CD | GitHub Actions — `ci.yml` (lint · types · unit · pgvector integration · Docker build → GHCR) plus a separate **`eval-gate.yml`** (the Ragas gate) |
-| LLM | Any OpenAI-compatible endpoint (default: **Groq free tier**, `llama-3.3-70b-versatile`) |
+| LLM | Any OpenAI-compatible endpoint (default: **Groq free tier**, `qwen/qwen3.8-27b`) |
 | Embeddings | Local, offline via **fastembed** (BAAI/bge-small-en-v1.5, 384-dim) — Groq has no embeddings API |
 
 ## Why the eval gate matters
@@ -33,8 +33,15 @@ PR opened ──▶ lint/type/unit ──▶ pgvector integration ──▶ [lab
                                     delta vs eval/baseline.json > −0.03 ? ──▶ ❌ build fails
                                                               │
 main ──▶ ci.yml: lint/type/unit/integration ──▶ Docker build ──▶ push ghcr.io/…:sha
-    └──▶ eval-gate.yml: the Ragas gate above also runs on every push to main
 ```
+
+> **Re-baselining in progress.** Groq decommissioned `llama-3.3-70b-versatile`,
+> the model `eval/baseline.json` was measured on. The default is now
+> `qwen/qwen3.8-27b`; scores are not comparable across a model swap, so the
+> gate's push-to-main trigger is temporarily disabled while a full-sample run
+> on the new model is produced and promoted. The gate still runs on demand and
+> on any PR labelled `run-eval`. No threshold was relaxed and the committed
+> baseline was not edited — see `.github/workflows/eval-gate.yml`.
 
 ![The eval gate in GitHub Actions: each Ragas metric compared to eval/baseline.json with its sample count. This run passes; any metric regressing beyond the 0.03 tolerance turns the build red.](assets/eval-gate.png)
 
@@ -66,12 +73,29 @@ a generation span.
 ## LLM
 
 Default configuration runs generation and Ragas judging on **Groq's free tier**
-(`llama-3.3-70b-versatile`, OpenAI-compatible) and embeddings **locally via
+(`qwen/qwen3.8-27b`, OpenAI-compatible) and embeddings **locally via
 fastembed** — Groq has no embeddings endpoint, so nothing embedding-related
 ever leaves the machine. Swapping to any other OpenAI-compatible provider
 (OpenAI, Azure via gateway, Ollama, vLLM) is still just an env-var change.
 
-Groq's free tier is rate-limited on `llama-3.3-70b-versatile` (30 RPM / ~12K
+**Hosted models get retired, and that breaks the gate, not just the app.** The
+default was `llama-3.3-70b-versatile` until Groq decommissioned it; the next
+eval run died in four seconds on `404 model_not_found`, and — worse — orphaned
+a baseline measured on a model that no longer exists. A dependency can be
+pinned; a hosted model cannot. List what is actually offered before assuming a
+model id is still live:
+
+```bash
+curl -H "Authorization: Bearer $LLM__API_KEY" \
+     https://api.groq.com/openai/v1/models | jq '.data[].id'
+```
+
+`qwen/qwen3.8-27b` was chosen over `openai/gpt-oss-*` because the gpt-oss
+models emit reasoning tokens — ~139 completion tokens versus qwen's 22 on the
+same grounded prompt — and the Ragas judge runs on this same model, against a
+daily cap a full run already strains.
+
+Groq's free tier is rate-limited (30 RPM / ~12K
 TPM / 1K RPD), plus — easy to miss — a **100K tokens/day (TPD)** cap. TPD is
 the one that actually bites: the golden set's questions × (1 generation call
 + 3 judge-metric calls each, all resending the full retrieved context) is

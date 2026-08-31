@@ -9,17 +9,28 @@ name: Eval Gate
 #   - manual dispatch
 # Requires repository secret: LLM_API_KEY.
 
+# TEMPORARY: the push-to-main trigger is disabled.
+#
+# Groq decommissioned llama-3.3-70b-versatile (404 model_not_found), which was
+# this project's default model and the model eval/baseline.json was measured
+# on. The default is now qwen/qwen3.8-27b, but scores are NOT comparable across
+# a model swap, so the committed baseline is orphaned and every gated run would
+# fail for a reason the gate was never meant to detect.
+#
+# Restore the block below once a full-sample run on the new model has been
+# reviewed and promoted (`python eval/check_regression.py --promote`):
+#
+#   push:
+#     branches: [main]
+#     paths-ignore:            # docs-only pushes can't move a metric
+#       - '**/*.md'
+#       - 'assets/**'
+#       - 'LICENSE'
+#
+# No threshold is relaxed and eval/baseline.json is untouched; the gate still
+# runs on demand and on any PR labelled `run-eval`, which is how the
+# re-baselining run itself should be driven.
 on:
-  push:
-    branches: [main]
-    # Docs-only pushes can't change any eval metric, so skip the (token-heavy,
-    # 100K-TPD-bound) gate for them. A mixed commit that also touches code
-    # still runs, since paths-ignore only skips when *every* changed file
-    # matches. workflow_dispatch below always forces a run when needed.
-    paths-ignore:
-      - '**/*.md'
-      - 'assets/**'
-      - 'LICENSE'
   pull_request:
     types: [labeled, synchronize]
   workflow_dispatch:

@@ -3,6 +3,15 @@
 > **Status: not implemented.** This is a design document, kept so the reasoning
 > (and the measurement traps found while writing it) isn't re-derived later.
 > Written 2026-08-31 against commit `43c6145`.
+>
+> **Numbers here are stale.** Every figure below — the 0.8923 baseline, the
+> per-question scores, which questions abstain — was measured on
+> `llama-3.3-70b-versatile`, which Groq has since decommissioned. The
+> *arguments* still hold: they turn on how Ragas treats noncommittal answers and
+> on how small n=20 is, neither of which depends on the model. The *values* must
+> be re-measured on `qwen/qwen3.8-27b` before anyone quotes them. Checkpoint 0
+> (freeze the baseline artifacts) is now more urgent, not less — the accumulated
+> `eval/.cache/` from the old model was also evicted by GitHub Actions.
 
 ## Goal
 
@@ -80,7 +89,7 @@ run — including every per-question score — exists on one machine and is one
 | Decision | Choice |
 |---|---|
 | Primary metric substrate | New `data/probe_set.jsonl` (~30 reviewed questions); golden set secondary |
-| Critic model | Different model, configurable; default `llama-3.1-8b-instant`; warn if equal to the generator's |
+| Critic model | Different model, configurable; default `openai/gpt-oss-20b`; warn if equal to the generator's |
 | Run budget | k=3 for deterministic metrics (latency / tokens / abstention), k=1 for Ragas-judged metrics |
 | Default pipeline mode | `linear` — the critic path is opt-in at every level |
 
@@ -256,9 +265,11 @@ layers, in descending order of strength:
    instructions are not reachable from the critic's message.
 3. **Separate instances.** `CriticSettings` builds its own `LLMClient` → own
    `httpx.Client`, own connection, own API key, own model string, own temperature.
-   Default critic model `llama-3.1-8b-instant` differs from the generator's
-   `llama-3.3-70b-versatile`; startup logs a warning when critic model *and*
-   base_url both equal the generator's.
+   Default critic model `openai/gpt-oss-20b` differs from the generator's
+   `qwen/qwen3.8-27b` — a different *family*, not merely a different size, which
+   is stronger against self-preference than the original same-family plan.
+   Startup logs a warning when critic model *and* base_url both equal the
+   generator's.
 4. **Enforced by test** (§5): capture the critic's outbound HTTP body via
    `httpx.MockTransport` and assert (a) `SYSTEM_PROMPT` / `PROMPT_TEMPLATE`
    substrings are absent, (b) the body contains only question/context/draft,
@@ -404,9 +415,12 @@ that is the regression signal for the hard constraint.
    the feature is net-negative — hence its mandatory place in the report.
 3. **Self-preference.** Mitigated structurally (§3) and by defaulting to a different
    model, not eliminated. Same-family models still share training-data priors.
-4. **Critic reliability on a free tier.** JSON adherence from `llama-3.1-8b-instant`
-   is decent but unmeasured here; a high parse-error rate would dominate the result.
-   It is measured and reported as its own rate.
+4. **Critic reliability on a free tier.** JSON adherence from `openai/gpt-oss-20b`
+   is unmeasured here; a high parse-error rate would dominate the result. It is
+   measured and reported as its own rate. Note the gpt-oss models emit reasoning
+   tokens (~240 completion tokens on a trivial grounded prompt, versus ~22 for
+   qwen), so a critic call is not cheap against the daily cap — re-check the
+   token-budget arithmetic in §7.6 before committing to this default.
 5. **Judge noise contaminates the secondary metric.** q10's *correct* answer scored
    0.333. Ragas faithfulness as the definition of "ungrounded" imports that noise
    into the golden-set X and Y. This is why the probe set is primary.

@@ -31,7 +31,16 @@ class LLMSettings(BaseModel):
 
     base_url: str = "https://api.groq.com/openai/v1"
     api_key: str = "unset"
-    model: str = "llama-3.3-70b-versatile"
+    # Was llama-3.3-70b-versatile until Groq decommissioned it (the whole Llama
+    # chat lineup went; /v1/models now answers 404 model_not_found for it). A
+    # hosted model can't be pinned the way a package can, so this default WILL
+    # rot again -- when it does, `GET {base_url}/models` says what's still
+    # offered. Chosen over openai/gpt-oss-*, which emit reasoning tokens and so
+    # cost ~3x per call; the Ragas judge runs on this same model, and a full
+    # judged run already strains the 100K-token daily cap (see README).
+    # NOTE: eval/baseline.json was measured on the old model. Scores are not
+    # comparable across this swap -- the baseline must be re-promoted.
+    model: str = "qwen/qwen3.8-27b"
     temperature: float = 0.0
     timeout_s: float = 60.0
     min_interval_s: float = 0.0  # throttle between requests, e.g. to stay under a TPM cap

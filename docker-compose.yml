@@ -38,7 +38,7 @@ services:
       DB__NAME: rag
       LLM__BASE_URL: ${LLM__BASE_URL:-https://api.groq.com/openai/v1}
       LLM__API_KEY: ${LLM__API_KEY:?set in .env}
-      LLM__MODEL: ${LLM__MODEL:-llama-3.3-70b-versatile}
+      LLM__MODEL: ${LLM__MODEL:-qwen/qwen3.8-27b}
       EMBEDDING__PROVIDER: ${EMBEDDING__PROVIDER:-fastembed}
       EMBEDDING__API_KEY: ${EMBEDDING__API_KEY:-${LLM__API_KEY:-}}
       LANGFUSE__ENABLED: ${LANGFUSE__ENABLED:-false}
