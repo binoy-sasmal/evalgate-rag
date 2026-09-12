@@ -14,6 +14,7 @@ if faithfulness, answer relevancy, or context precision regress** beyond toleran
 | Store | PostgreSQL 16 + pgvector (HNSW index) |
 | Observability | Langfuse tracing on every query (self-hosted via compose profile) |
 | Evaluation | Ragas: faithfulness · answer relevancy · context precision |
+| Deployment | Terraform → single EC2 instance, ~$13/month (free on a legacy Free Tier account) ([docs/deploy-aws.md](docs/deploy-aws.md)) |
 | CI/CD | GitHub Actions — `ci.yml` (lint · types · unit · pgvector integration · Docker build → GHCR) plus a separate **`eval-gate.yml`** (the Ragas gate) |
 | LLM | Any OpenAI-compatible endpoint (default: **Groq free tier**, `qwen/qwen3.8-27b`) |
 | Embeddings | Local, offline via **fastembed** (BAAI/bge-small-en-v1.5, 384-dim) — Groq has no embeddings API |
@@ -139,6 +140,36 @@ provider, or `golden_set.jsonl` changes; pass `--fresh` to force a clean run
 outright (needed after a corpus re-ingest or chunking-strategy change, since
 that state lives in Postgres and isn't visible to this script).
 
+## Deploying to AWS
+
+[`terraform/`](terraform/) stands the service up on a single EC2 instance for
+**~$13/month** — $0 on a legacy 12-month Free Tier account, or ~7 months of
+runway against the $100 credit on a current Free Tier plan. No load balancer,
+no NAT gateway, no RDS, since those three are what turn a small AWS deployment
+into a $70 bill. Postgres/pgvector runs as a container beside the API on the same box,
+the Groq key comes from SSM Parameter Store at boot (never from Terraform
+state), shell access is SSM Session Manager rather than an open port 22, and a
+$1 budget alarm acts as a tripwire.
+
+```bash
+aws ssm put-parameter --name /evalgate-rag/llm-api-key   --type SecureString --value "gsk_..." --region eu-north-1
+
+cd terraform && cp terraform.tfvars.example terraform.tfvars   # set allowed_cidr
+terraform init && terraform apply
+
+curl -s "$(terraform output -raw api_url)/ready"   # {"status":"ready","chunks":452}
+```
+
+The full runbook — prerequisites, cost table, teardown, and what to harden
+before this is more than a demo — is in [docs/deploy-aws.md](docs/deploy-aws.md).
+
+**`/ready` is the endpoint that matters.** `/health` is liveness only and does
+no I/O, so a database blip never gets the container restarted. `/ready` checks
+that the store is reachable *and* non-empty, because an un-ingested deployment
+doesn't crash — it retrieves nothing and answers every question with "I cannot
+answer this from the provided context", which reads like a broken model rather
+than a missing step.
+
 ## UI
 
 A minimal Streamlit client for interacting with the API — a question box, a
@@ -208,6 +239,8 @@ scripts/              fetch_corpus · ingest · benchmark_chunking · generate_g
 eval/                 run_eval (Ragas) · check_regression (the gate) · baseline.json
 data/                 golden_set.jsonl · corpus/ (EU AI Act, committed)
 tests/                offline unit tests + pgvector integration tests
+terraform/            single-instance AWS deployment (Free Tier)
+docs/                 deploy-aws.md · future-work-critic-loop.md
 .github/workflows/    ci.yml · eval-gate.yml
 ```
 

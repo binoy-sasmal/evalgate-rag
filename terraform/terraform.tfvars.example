@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# Your public IP, so the API is not open to the internet. Find it with:
+#   curl -s ifconfig.me
+# /query spends Groq quota per call on a 1K-request/day free tier, and the eval
+# gate shares that key -- an open endpoint can take the gate down with it.
+allowed_cidr = "203.0.113.4/32"
+
+# Where the $1 budget tripwire emails you.
+budget_notification_email = "you@example.com"
+
+# Optional overrides:
+# region        = "eu-north-1"
+# instance_type = "t3.micro"
+# image         = "ghcr.io/binoy-sasmal/evalgate-rag:latest"

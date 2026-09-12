@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# First-boot provisioning for evalgate-rag.
+#
+# Rendered by Terraform (templatefile), so $${BASH_VARS} are escaped -- a bare
+# $${...} here would be interpolated by Terraform at plan time instead of by
+# bash at run time.
+set -euo pipefail
+exec > >(tee -a /var/log/evalgate-deploy.log) 2>&1
+echo "=== evalgate-rag provisioning started $(date -Is) ==="
+
+APP_DIR=/opt/evalgate-rag
+
+# --- swap ---------------------------------------------------------------
+# t3.micro has 1GB of RAM and this box runs Postgres and the API together.
+# The API's ONNX session alone is ~350MB resident, and ingest embeds 450+
+# chunks on top of that. Without swap the kernel OOM-kills whichever container
+# asks for memory last -- usually Postgres, mid-ingest, which looks like a
+# corrupt database rather than a sizing problem. 2GB of swap on gp3 is enough
+# headroom for the peak, and the steady state stays in RAM.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  # Prefer RAM, but swap before killing anything.
+  sysctl -w vm.swappiness=10
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-evalgate.conf
+fi
+
+# --- docker -------------------------------------------------------------
+dnf install -y docker
+systemctl enable --now docker
+
+# Compose v2 is not packaged for AL2023; install the CLI plugin directly.
+COMPOSE_VERSION=v2.29.7
+ARCH=$(uname -m)
+install -d /usr/libexec/docker/cli-plugins
+curl -fsSL \
+  "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-$ARCH" \
+  -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+docker compose version
+
+# --- secrets ------------------------------------------------------------
+install -d -m 0750 "$APP_DIR"
+
+# The LLM key comes from SSM Parameter Store at boot, never from Terraform
+# state and never from the AMI. --with-decryption uses the instance role's
+# grant on alias/aws/ssm (see iam.tf).
+LLM_API_KEY=$(aws ssm get-parameter \
+  --region '${region}' \
+  --name '${llm_api_key_parameter}' \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text)
+
+# Postgres is only reachable on the compose network, never published to the
+# host, but a generated password costs nothing and keeps the committed
+# docker-compose.yml's "rag/rag" dev credentials out of a public-subnet box.
+DB_PASSWORD=$(openssl rand -hex 16)
+
+umask 077
+cat > "$APP_DIR/.env" <<ENVEOF
+IMAGE=${image}
+DB_PASSWORD=$DB_PASSWORD
+LLM_API_KEY=$LLM_API_KEY
+ENVEOF
+chmod 600 "$APP_DIR/.env"
+unset LLM_API_KEY
+
+# --- compose stack ------------------------------------------------------
+cat > "$APP_DIR/compose.yaml" <<'COMPOSEEOF'
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: $${DB_PASSWORD}
+      POSTGRES_DB: rag
+    # Tuned down from the pg16 defaults for a 1GB shared box: the corpus is
+    # ~450 rows and the HNSW index over it is a few megabytes, so the default
+    # 128MB shared_buffers and 100 backends buy nothing and cost RAM the API
+    # needs. max_connections comfortably exceeds the app pool's max_size of 4.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: $${IMAGE}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB__HOST: db
+      DB__PORT: "5432"
+      DB__USER: rag
+      DB__PASSWORD: $${DB_PASSWORD}
+      DB__NAME: rag
+      LLM__BASE_URL: ${llm_base_url}
+      LLM__API_KEY: $${LLM_API_KEY}
+      LLM__MODEL: ${llm_model}
+      EMBEDDING__PROVIDER: fastembed
+      LANGFUSE__ENABLED: "false"
+    ports:
+      - "80:8000"
+volumes:
+  pgdata:
+COMPOSEEOF
+
+# --- helper: re-pull the image and re-ingest ----------------------------
+# Ingest is idempotent (ON CONFLICT DO UPDATE on (doc_id, seq)), so this is
+# safe to run repeatedly -- it is the normal way to pick up a new image.
+cat > /usr/local/bin/evalgate-redeploy <<'REDEPLOYEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cd /opt/evalgate-rag
+docker compose pull
+docker compose up -d
+docker compose run --rm api python scripts/ingest.py --strategy recursive
+docker image prune -f
+curl -fsS http://localhost/ready && echo
+REDEPLOYEOF
+chmod +x /usr/local/bin/evalgate-redeploy
+
+# --- start --------------------------------------------------------------
+cd "$APP_DIR"
+docker compose pull
+docker compose up -d
+
+# --- ingest -------------------------------------------------------------
+# Without this the store is empty, retrieval returns nothing, and every answer
+# is "I cannot answer this from the provided context" -- which reads like a
+# broken model rather than a missing step. /ready fails closed on it.
+echo "=== ingesting corpus $(date -Is) ==="
+docker compose run --rm api python scripts/ingest.py --strategy recursive
+
+# --- verify -------------------------------------------------------------
+for attempt in $(seq 1 30); do
+  if curl -fsS http://localhost/ready; then
+    echo
+    echo "=== evalgate-rag ready $(date -Is) ==="
+    exit 0
+  fi
+  echo "waiting for readiness (attempt $attempt/30)..."
+  sleep 5
+done
+
+echo "ERROR: service did not become ready. Recent container logs:" >&2
+docker compose logs --tail 50 >&2
+exit 1
