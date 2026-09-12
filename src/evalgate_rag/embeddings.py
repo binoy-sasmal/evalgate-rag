@@ -43,12 +43,22 @@ class OpenAIEmbedder:
 
 
 class FastEmbedEmbedder:
-    """Local, torch-free embeddings via fastembed (BAAI/bge-small-en-v1.5)."""
+    """Local, torch-free embeddings via fastembed (BAAI/bge-small-en-v1.5).
 
-    def __init__(self, model: str = "BAAI/bge-small-en-v1.5") -> None:
+    `cache_dir` points at a pre-populated model cache. Left unset, fastembed
+    downloads ~130MB from HuggingFace the first time this is constructed --
+    which in a container means every cold start pays for the download, needs
+    outbound internet to a third party just to boot, and blows past the
+    healthcheck's start period. The Dockerfile bakes the model into the image
+    and sets EMBEDDING__CACHE_DIR so startup is offline and immediate. Passed
+    explicitly rather than via fastembed's FASTEMBED_CACHE_PATH env var so the
+    source of the path is visible in config, not implicit in the environment.
+    """
+
+    def __init__(self, model: str = "BAAI/bge-small-en-v1.5", cache_dir: str | None = None) -> None:
         from fastembed import TextEmbedding  # lazy: optional dependency
 
-        self._model = TextEmbedding(model)
+        self._model = TextEmbedding(model, cache_dir=cache_dir)
         self.dimension = 384
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:
@@ -80,7 +90,7 @@ def make_embedder(cfg: EmbeddingSettings) -> Embedder:
     if cfg.provider == "openai":
         return OpenAIEmbedder(cfg)
     if cfg.provider == "fastembed":
-        return FastEmbedEmbedder()
+        return FastEmbedEmbedder(cache_dir=cfg.cache_dir)
     if cfg.provider == "hash":
         return HashEmbedder()
     raise ValueError(f"Unknown embedding provider: {cfg.provider}")

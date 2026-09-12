@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -39,19 +39,59 @@ class Store(Protocol):
     def upsert(self, chunks: Sequence[Chunk], embeddings: np.ndarray) -> None: ...
     def dense_search(self, query_vec: np.ndarray, top_k: int) -> list[ScoredChunk]: ...
     def all_chunks(self) -> list[Chunk]: ...
+    def count(self) -> int: ...
 
 
 class PgVectorStore:
-    def __init__(self, dsn: str, dimension: int) -> None:
+    """pgvector-backed store over a connection *pool*.
+
+    A single long-lived connection (the previous design) is fine against a
+    local container but breaks permanently against a managed/remote Postgres:
+    a restart, failover, maintenance window or an idle NAT timeout kills the
+    socket, and nothing ever reopens it -- the process keeps serving, and every
+    query fails, until someone restarts it. The pool checks a connection on
+    checkout (`check_connection`) and transparently replaces dead ones, so a
+    database bounce costs one failed request instead of the whole task.
+
+    `register_vector` is applied per-connection via the pool's configure hook;
+    it resolves the `vector` type OID, so the extension must already exist --
+    hence the one-shot schema connection below, which runs before the pool opens.
+    """
+
+    def __init__(
+        self,
+        dsn: str,
+        dimension: int,
+        *,
+        min_size: int = 1,
+        max_size: int = 4,
+        timeout_s: float = 10.0,
+    ) -> None:
         import psycopg
         from pgvector.psycopg import register_vector
+        from psycopg_pool import ConnectionPool
 
-        self._conn = psycopg.connect(dsn, autocommit=True)
-        self._conn.execute(SCHEMA_SQL.format(dim=dimension))
-        register_vector(self._conn)
+        # Schema first, on a throwaway connection: CREATE EXTENSION has to have
+        # run before register_vector can look the type up on pooled connections.
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(SCHEMA_SQL.format(dim=dimension))
+
+        def _configure(conn: Any) -> None:
+            conn.autocommit = True
+            register_vector(conn)
+
+        self._pool = ConnectionPool(
+            dsn,
+            min_size=min_size,
+            max_size=max_size,
+            configure=_configure,
+            check=ConnectionPool.check_connection,
+            timeout=timeout_s,
+            open=True,
+        )
 
     def upsert(self, chunks: Sequence[Chunk], embeddings: np.ndarray) -> None:
-        with self._conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             for chunk, vec in zip(chunks, embeddings, strict=True):
                 cur.execute(
                     """
@@ -64,7 +104,7 @@ class PgVectorStore:
                 )
 
     def dense_search(self, query_vec: np.ndarray, top_k: int) -> list[ScoredChunk]:
-        with self._conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT doc_id, seq, text, 1 - (embedding <=> %s) AS score
@@ -76,9 +116,23 @@ class PgVectorStore:
         return [ScoredChunk(Chunk(text=r[2], doc_id=r[0], seq=r[1]), float(r[3])) for r in rows]
 
     def all_chunks(self) -> list[Chunk]:
-        with self._conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT doc_id, seq, text FROM chunks ORDER BY doc_id, seq")
             return [Chunk(text=r[2], doc_id=r[0], seq=r[1]) for r in cur.fetchall()]
+
+    def count(self) -> int:
+        """Number of ingested chunks. Used by the readiness probe to tell a
+        started-but-unfed deployment (ingest never ran) apart from a healthy
+        one -- an empty store retrieves nothing and answers every question with
+        "I cannot answer this from the provided context", which otherwise looks
+        like a model problem rather than a deployment problem."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM chunks")
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def close(self) -> None:
+        self._pool.close()
 
 
 class InMemoryStore:
@@ -101,3 +155,6 @@ class InMemoryStore:
 
     def all_chunks(self) -> list[Chunk]:
         return list(self._chunks)
+
+    def count(self) -> int:
+        return len(self._chunks)

@@ -194,8 +194,14 @@ class RAGPipeline:
         self._tracer = tracer
         self._top_k = top_k
 
-    def answer(self, question: str) -> RAGResult:
-        contexts = self._retriever.retrieve(question, top_k=self._top_k)
+    def answer(self, question: str, top_k: int | None = None) -> RAGResult:
+        """Answer one question. `top_k` overrides the configured default for
+        this call only -- it is a parameter rather than an attribute write
+        because the pipeline is a single shared object across concurrent
+        requests (FastAPI runs the sync `/query` handler in a threadpool), so
+        mutating `self._top_k` per request let one caller's override leak into
+        another's answer."""
+        contexts = self._retriever.retrieve(question, top_k=self._top_k if top_k is None else top_k)
         context_block = "\n\n---\n\n".join(f"[{c.chunk.doc_id}]\n{c.chunk.text}" for c in contexts)
         answer = self._llm.chat(
             SYSTEM_PROMPT, PROMPT_TEMPLATE.format(context=context_block, question=question)
