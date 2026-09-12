@@ -36,6 +36,24 @@ PR opened ──▶ lint/type/unit ──▶ pgvector integration ──▶ [lab
 main ──▶ ci.yml: lint/type/unit/integration ──▶ Docker build ──▶ push ghcr.io/…:sha
 ```
 
+### The committed baseline
+
+`eval/baseline.json` is the standard every run is measured against. A metric may
+drift down by at most **0.03** before the build goes red:
+
+| Metric | Baseline | Fails below |
+|---|---|---|
+| `faithfulness` | **0.8923** | 0.8623 |
+| `answer_relevancy` | **0.8090** | 0.7790 |
+| `context_precision` | **0.7892** | 0.7592 |
+
+Measured over the 20-question golden set. The file changes **only** via
+`python eval/check_regression.py --promote` after a human-reviewed improvement —
+never by hand to turn a red build green, which is the failure mode that converts
+a quality gate into decoration. Promotion itself refuses to run on a partial
+sample or on results with missing metrics, so a half-finished run can't become
+the new standard either. Promotions are visible in git history.
+
 > **Re-baselining in progress.** Groq decommissioned `llama-3.3-70b-versatile`,
 > the model `eval/baseline.json` was measured on. The default is now
 > `qwen/qwen3.8-27b`; scores are not comparable across a model swap, so the
