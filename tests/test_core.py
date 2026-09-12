@@ -327,3 +327,80 @@ def test_llm_client_throttles_to_min_interval(monkeypatch):
     client.chat("system", "question")
 
     assert sleeps == [pytest.approx(1.5)]
+
+
+def test_llm_client_sends_max_tokens():
+    """Without a declared ceiling, providers reserve the model default against
+    a per-minute output budget -- Groq reserves 2048 against a 1000 OTPM cap,
+    which rejects every request regardless of how idle the account is."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response("ok"))
+
+    client = LLMClient(
+        LLMSettings(base_url="http://test", api_key="k", max_tokens=512),
+        transport=httpx.MockTransport(handler),
+    )
+    assert client.chat("sys", "user") == "ok"
+    assert seen["max_tokens"] == 512
+
+
+def test_llm_client_does_not_retry_an_oversized_request(monkeypatch):
+    """A 429 about request size is not transient. Retrying cannot help -- the
+    request is the same size next time -- and each attempt reserves more of the
+    per-minute budget it is waiting on, so backoff prolongs the outage."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "message": (
+                        "Request too large for model `qwen/qwen3.8-27b` on output tokens "
+                        "per minute (OTPM): Limit 1000, Requested 2048. reduce max_tokens"
+                    )
+                }
+            },
+        )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("evalgate_rag.pipeline.time.sleep", lambda s: sleeps.append(s))
+
+    client = LLMClient(
+        LLMSettings(base_url="http://test", api_key="k"),
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        client.chat("sys", "user")
+
+    assert calls["n"] == 1, "must fail on the first response, not burn retries"
+    assert sleeps == [], "must not back off"
+
+
+def test_llm_client_still_retries_a_genuine_rate_limit(monkeypatch):
+    """The size check must not swallow ordinary transient 429s."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                429,
+                headers={"retry-after": "0"},
+                json={"error": {"message": "Rate limit reached for requests"}},
+            )
+        return httpx.Response(200, json=_chat_response("recovered"))
+
+    monkeypatch.setattr("evalgate_rag.pipeline.time.sleep", lambda s: None)
+    client = LLMClient(
+        LLMSettings(base_url="http://test", api_key="k"),
+        transport=httpx.MockTransport(handler),
+    )
+    assert client.chat("sys", "user") == "recovered"
+    assert calls["n"] == 2
