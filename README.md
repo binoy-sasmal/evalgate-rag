@@ -142,14 +142,35 @@ that state lives in Postgres and isn't visible to this script).
 
 ## Deploying to AWS
 
-[`terraform/`](terraform/) stands the service up on a single EC2 instance for
-**~$13/month** — $0 on a legacy 12-month Free Tier account, or ~7 months of
-runway against the $100 credit on a current Free Tier plan. No load balancer,
-no NAT gateway, no RDS, since those three are what turn a small AWS deployment
-into a $70 bill. Postgres/pgvector runs as a container beside the API on the same box,
-the Groq key comes from SSM Parameter Store at boot (never from Terraform
-state), shell access is SSM Session Manager rather than an open port 22, and a
-$1 budget alarm acts as a tripwire.
+[`terraform/`](terraform/) stands the whole service up on a single EC2 instance —
+API and pgvector side by side, ingest run automatically on first boot.
+
+```
+        allowed_cidr only          ┌──────────────────────────┐
+   (no auth on /query, so this ───▶│  EC2 t3.micro            │
+    is the access control)    :80  │  ┌────────┐  ┌────────┐  │
+                                   │  │  api   │  │  pg16  │  │  docker compose
+                                   │  │ :8000  │  │pgvector│  │
+                                   │  └────────┘  └────────┘  │
+                                   └──────────────────────────┘
+                                        │ Internet Gateway (no NAT)
+                                        ▼
+                                   Groq · GHCR · SSM Parameter Store
+```
+
+**~$13/month**, and the omissions are the point: no load balancer (~$17), no NAT
+gateway (~$33), no RDS (~$13), no Secrets Manager. Those four are most of what
+turns a small AWS deployment into a $70 bill, and none are needed for one box —
+a public subnet with a closed security group gives identical egress for $0, and
+the database is reproducible from the image rather than precious.
+
+The Groq key lives in SSM Parameter Store and is read at boot, so it never enters
+Terraform state (a `sensitive = true` variable is still plaintext in
+`terraform.tfstate`). Shell access is SSM Session Manager — no port 22, no key
+pair, no bastion. IMDSv2 is required with a one-hop limit, so a compromised
+container can't reach the instance role. A $1 budget alarm tracks cost *before*
+credits are applied, because Budgets otherwise reports $0 on a credits-based
+account while the balance quietly drains.
 
 ```bash
 aws ssm put-parameter --name /evalgate-rag/llm-api-key   --type SecureString --value "gsk_..." --region eu-north-1
@@ -160,15 +181,45 @@ terraform init && terraform apply
 curl -s "$(terraform output -raw api_url)/ready"   # {"status":"ready","chunks":452}
 ```
 
-The full runbook — prerequisites, cost table, teardown, and what to harden
-before this is more than a demo — is in [docs/deploy-aws.md](docs/deploy-aws.md).
+Full runbook — prerequisites, cost table, teardown, and what to harden before this
+is more than a demo — in [docs/deploy-aws.md](docs/deploy-aws.md).
 
-**`/ready` is the endpoint that matters.** `/health` is liveness only and does
-no I/O, so a database blip never gets the container restarted. `/ready` checks
-that the store is reachable *and* non-empty, because an un-ingested deployment
-doesn't crash — it retrieves nothing and answers every question with "I cannot
-answer this from the provided context", which reads like a broken model rather
-than a missing step.
+![The deployed service on its EC2 instance: the host resolves to ip-10-20-1-83.eu-north-1.compute.internal, both the API and pgvector containers report healthy, /ready confirms 452 ingested chunks, and a live query returns a grounded answer citing Article 99 and Article 100 with its retrieved contexts and fusion scores.](assets/aws-deployment.png)
+
+<sub>Running on the deployed instance. The retrieval scores are RRF sums: Article 5 and
+Article 99 sit near 0.03 because <em>both</em> the BM25 and dense legs surfaced them, while
+a single-leg hit scores about 1/61 — the hybrid retrieval doing visible work.</sub>
+
+**`/ready` is the endpoint that matters.** `/health` is liveness only and does no
+I/O, so a database blip never gets the container restarted. `/ready` checks the
+store is reachable *and* non-empty — because an un-ingested deployment doesn't
+crash, it retrieves nothing and answers every question with "I cannot answer this
+from the provided context". That looks like a broken model. It's a missing step,
+and failing readiness makes it say so.
+
+### What deploying it actually surfaced
+
+Running this somewhere real found bugs that local development structurally cannot,
+which is the honest argument for deploying a side project at all:
+
+- **A single Postgres connection**, opened at startup and never replaced. Fine
+  against a loopback; against a remote database any failover or idle timeout wedges
+  the process permanently while `/health` keeps returning 200. Now a pooled
+  connection checked on checkout — with a test that kills every backend via
+  `pg_terminate_backend` and asserts recovery.
+- **A 130MB model download on every cold start.** `fastembed` fetched BGE-small
+  from HuggingFace on first construction, making boot depend on a third party and
+  overrunning the healthcheck's start period. Now baked into the image; verified by
+  ingesting with `HF_HUB_OFFLINE=1`.
+- **A per-request value written onto a shared object.** `/query` assigned `top_k`
+  to the pipeline instance, which FastAPI shares across threadpool requests — so one
+  caller's override leaked into the next. Now a parameter.
+- **No `max_tokens` on the LLM request.** Providers reserve per-minute output budget
+  against a request's *expected* output; with no ceiling declared, Groq reserved the
+  model default of 2048 against a 1000 output-tokens-per-minute cap and rejected
+  every call. Worse, the 429 retry path backed off and retried — but a 429 about
+  request *size* never succeeds on retry, and each attempt reserved more of the
+  budget it was waiting to free.
 
 ## UI
 
