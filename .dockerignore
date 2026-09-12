@@ -2,7 +2,6 @@
 .github
 tests
 eval
-data/corpus
 .env
 __pycache__
 *.egg-info

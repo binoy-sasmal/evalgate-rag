@@ -18,6 +18,7 @@ ruff check . && ruff format --check .          # lint
 mypy src/                                      # types
 python scripts/benchmark_chunking.py --hash    # offline retrieval benchmark
 python eval/run_eval.py && python eval/check_regression.py   # full eval gate (costs tokens)
+cd terraform && terraform validate && terraform fmt -check -recursive   # IaC checks
 ```
 
 ## Architecture in one paragraph
@@ -45,6 +46,13 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 5. **Write the test first** when changing chunking, retrieval, or fusion
    behaviour — these are the components the eval gate exists to protect.
 6. Keep `ruff check` and `mypy src/` clean; line length 100.
+7. **Never put a secret in Terraform state.** The LLM API key lives in SSM
+   Parameter Store and is read by the instance at boot; Terraform is granted
+   permission to it and never reads its value. A `sensitive = true` variable is
+   still plaintext in `terraform.tfstate`.
+8. **The deployment has no authentication.** `terraform/` restricts `/query` by
+   source CIDR only, and every call spends Groq quota the eval gate also draws
+   on. Don't widen `allowed_cidr` to `0.0.0.0/0` without adding an API key check.
 
 ## Files agents most often need
 
@@ -56,3 +64,4 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 | `eval/run_eval.py` | Ragas suite over the golden set |
 | `eval/check_regression.py` | the CI gate itself |
 | `.github/workflows/eval-gate.yml` | when/how the gate runs in CI |
+| `terraform/` | single-EC2 AWS deployment; `docs/deploy-aws.md` is the runbook |

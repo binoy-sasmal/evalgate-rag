@@ -1,0 +1,11 @@
+# Terraform state contains resource attributes in plaintext -- never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+*.tfvars.json
+crash.log
+
+# .terraform.lock.hcl is deliberately NOT ignored. It pins provider hashes the
+# same way pyproject.toml pins onnxruntime -- an unpinned provider resolve is
+# exactly the kind of drift that changes infrastructure behaviour with no diff.

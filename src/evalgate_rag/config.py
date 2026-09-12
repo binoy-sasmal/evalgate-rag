@@ -55,6 +55,9 @@ class EmbeddingSettings(BaseModel):
     api_key: str = "unset"
     model: str = "text-embedding-3-small"
     dimension: int = 1536
+    # fastembed only: path to a pre-populated model cache. The container image
+    # bakes the model in and sets this, so startup needs no HuggingFace fetch.
+    cache_dir: str | None = None
 
 
 class LangfuseSettings(BaseModel):

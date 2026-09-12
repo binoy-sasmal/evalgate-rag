@@ -102,13 +102,22 @@ def test_hybrid_retrieval_on_empty_store_returns_no_results():
 
 
 class FakePipeline:
-    def answer(self, question: str) -> RAGResult:
+    def __init__(self) -> None:
+        self.seen_top_k: list[int | None] = []
+
+    def answer(self, question: str, top_k: int | None = None) -> RAGResult:
+        self.seen_top_k.append(top_k)
         return RAGResult(answer=f"echo: {question}", contexts=[], trace_id=None)
 
 
 @pytest.fixture()
-def client():
-    app = build_app(pipeline=FakePipeline())  # type: ignore[arg-type]
+def fake_pipeline():
+    return FakePipeline()
+
+
+@pytest.fixture()
+def client(fake_pipeline):
+    app = build_app(pipeline=fake_pipeline)  # type: ignore[arg-type]
     with TestClient(app) as c:
         yield c
 
@@ -127,6 +136,40 @@ def test_query_roundtrip(client):
 
 def test_query_validates_short_question(client):
     assert client.post("/query", json={"question": "hi"}).status_code == 422
+
+
+def test_ready_reports_ready_with_injected_pipeline(client):
+    body = client.get("/ready").json()
+    assert body["status"] == "ready"
+    assert body["chunks"] is None
+
+
+def test_top_k_override_does_not_leak_between_requests(client, fake_pipeline):
+    # top_k used to be written onto the shared pipeline object per request
+    # (pl._top_k = req.top_k). FastAPI runs the sync /query handler in a
+    # threadpool over one pipeline instance, so an override from one caller
+    # stayed set for every later caller that omitted it.
+    client.post("/query", json={"question": "with an override", "top_k": 17})
+    client.post("/query", json={"question": "without one"})
+    assert fake_pipeline.seen_top_k == [17, None]
+
+
+def test_pipeline_top_k_argument_overrides_configured_default():
+    class CountingLLM:
+        class _Cfg:
+            model = "fake"
+
+        _cfg = _Cfg()
+
+        def chat(self, system: str, user: str) -> str:
+            return "ok"
+
+    from evalgate_rag.config import LangfuseSettings
+
+    pipeline = RAGPipeline(_build_retriever(), CountingLLM(), Tracer(LangfuseSettings()), top_k=1)  # type: ignore[arg-type]
+    assert len(pipeline.answer("fines").contexts) == 1  # configured default
+    assert len(pipeline.answer("fines", top_k=3).contexts) == 3  # per-call override
+    assert len(pipeline.answer("fines").contexts) == 1  # default restored, not mutated
 
 
 # ------------------------------------------------------------------ tracer
