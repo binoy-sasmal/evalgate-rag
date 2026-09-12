@@ -87,6 +87,7 @@ class LLMClient:
                 json={
                     "model": self._cfg.model,
                     "temperature": self._cfg.temperature,
+                    "max_tokens": self._cfg.max_tokens,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -95,6 +96,21 @@ class LLMClient:
             )
             self._last_request_at = time.monotonic()
             if resp.status_code == 429 and attempt < MAX_RETRIES:
+                # Not every 429 is about timing. A provider also returns 429
+                # when the request's declared output is larger than a
+                # per-minute output budget -- that rejects the request's
+                # *shape*, and the request will be exactly as large next time.
+                # Worse, each attempt reserves more of the very budget it is
+                # waiting to free, so backing off actively prolongs the
+                # outage. Observed live: the reserved figure climbed 1119 ->
+                # 1482 -> 1628 -> 2048 across retries of one question.
+                if self._is_oversized_request(resp):
+                    print(
+                        "[LLMClient] 429 rejects the request size, not its timing -- retrying "
+                        f"cannot help: {self._describe_limit(resp)}",
+                        file=sys.stderr,
+                    )
+                    resp.raise_for_status()
                 wait_s = self._retry_delay(resp, backoff)
                 if wait_s > MAX_RETRYABLE_WAIT_S:
                     print(
@@ -115,6 +131,17 @@ class LLMClient:
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
         raise RuntimeError("unreachable")  # pragma: no cover
+
+    @staticmethod
+    def _is_oversized_request(resp: httpx.Response) -> bool:
+        """True when a 429 rejects the request's size rather than its timing."""
+        try:
+            error = resp.json().get("error")
+            message = error.get("message") if isinstance(error, dict) else error
+        except ValueError:
+            return False
+        text = str(message).lower()
+        return "request too large" in text or "reduce max_tokens" in text
 
     @staticmethod
     def _retry_delay(resp: httpx.Response, backoff: float) -> float:

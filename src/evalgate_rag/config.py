@@ -43,6 +43,13 @@ class LLMSettings(BaseModel):
     model: str = "qwen/qwen3.8-27b"
     temperature: float = 0.0
     timeout_s: float = 60.0
+    # Declared output ceiling. Not optional in practice: providers reserve
+    # per-minute output budget against a request's *expected* output, and with
+    # no max_tokens they reserve the model's default (2048 on Groq). That alone
+    # exceeds Groq's free-tier 1000 output-tokens-per-minute cap, so every
+    # /query is rejected 429 "Request too large" no matter how idle the account
+    # is. Answers here run ~30 tokens, so 512 is generous and still fits.
+    max_tokens: int = 512
     min_interval_s: float = 0.0  # throttle between requests, e.g. to stay under a TPM cap
 
 

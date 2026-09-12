@@ -1,13 +1,18 @@
 # Amazon Linux 2023, resolved by image name so the AMI id is never hardcoded --
 # ids are region-specific and rotate on every patch release.
 #
-# Looked up with describe-images rather than the /aws/service/ SSM alias that is
-# the usual idiom for this. The alias namespace does not resolve in every
-# account (it returns ParameterNotFound rather than AccessDenied, so it fails
-# confusingly and only at apply time), and the "kernel-default" alias name has
-# been retired -- current AL2023 images publish as kernel-6.1, 6.12 and 6.18.
-# describe-images needs only the ec2:DescribeImages that any deploying identity
-# already has.
+# The usual idiom is the /aws/service/ami-amazon-linux-latest/... SSM alias,
+# which works and is three lines instead of twenty. It is not used here for one
+# reason: that alias tracks whatever AWS currently calls "default", which today
+# means kernel 6.18. AL2023 publishes 6.1, 6.12 and 6.18 on the same date, so
+# when the default advances, the alias silently returns a different image and
+# the next apply replaces the instance -- a kernel major-version jump arriving
+# as an unrelated diff. Pinning the kernel line makes that a deliberate edit to
+# var.ami_kernel instead.
+#
+# The tradeoff, stated plainly: if AWS ever stops publishing the pinned line,
+# this data source finds nothing and fails at plan time. That is the better
+# failure -- it is loud, and it happens before anything is replaced.
 data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
