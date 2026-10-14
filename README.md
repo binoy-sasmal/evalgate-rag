@@ -315,10 +315,29 @@ Design choices worth knowing:
   `OTEL_EXPORTER_OTLP_*` variables, so a managed collector needs no code change.
 - **A dead collector cannot stop the API.** Export is batched in the background.
 
-What has and has not been exercised: the full chain was verified locally by
-driving the real pipeline and exporter with a stubbed LLM (40 questions, with
-injected 429s and 500s) and reading the results back from Prometheus, Tempo and
-Grafana. It has not yet run against the deployed instance or real traffic.
+**A live run, and what it showed.** On 2026-10-14 the 20 golden-set questions
+went through the containerised API against Groq's free tier
+(`qwen/qwen3.8-27b`), with this stack recording. All 20 were answered.
+
+![Grafana dashboard during the 20-question run: answered rate, p50/p95 time to answer, retrieval vs LLM p95, tokens per minute split input/output, zero failures, and rate-limit retries peaking at five a minute.](assets/grafana-dashboard.png)
+
+- **Retrieval is not the bottleneck.** It averaged 93 ms. The model call had a
+  median of about 0.9 s when not rate-limited.
+- **The slow tail is rate limiting, not the model.** Four of the 20 questions
+  took 13 to 29 s. The traces put all of it in the model call, and the 10
+  retries recorded were all against Groq's free-tier cap of 1,000 output tokens
+  per minute.
+- **Answers are much longer than this repo assumed.** The 20 answers used
+  15,419 input and 3,940 output tokens, about 197 output tokens each. The
+  comments that size `max_tokens` assume about 30, which was true of the
+  earlier model. With 512 tokens reserved per request and about 200 actually
+  generated, two or three questions a minute exhaust the free-tier output
+  budget, which is the slow tail above.
+
+![Tempo trace of the slowest question: rag.query at 28.99 s, of which rag.retrieval took 85.5 ms and the chat call 28.9 s, with retry events marked on it.](assets/tempo-trace.png)
+
+What has not been exercised: any deployed instance, and traffic beyond this
+one 20-question run. The alert thresholds have not been tuned against it.
 
 ## UI
 
