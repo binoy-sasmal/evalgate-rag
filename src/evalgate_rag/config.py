@@ -31,6 +31,11 @@ class LLMSettings(BaseModel):
 
     base_url: str = "https://api.groq.com/openai/v1"
     api_key: str = "unset"
+    # "api_key" sends api_key as the bearer token. "azure_managed_identity"
+    # ignores api_key and sends a short-lived Microsoft Entra ID token fetched
+    # from the platform (see auth.py), for Azure OpenAI with key access disabled.
+    auth: str = "api_key"
+    azure_token_resource: str = "https://cognitiveservices.azure.com"
     # Was llama-3.3-70b-versatile until Groq decommissioned it (the whole Llama
     # chat lineup went; /v1/models now answers 404 model_not_found for it). A
     # hosted model can't be pinned the way a package can, so this default WILL

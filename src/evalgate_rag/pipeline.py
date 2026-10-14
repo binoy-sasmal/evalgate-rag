@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,7 @@ import httpx
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
+from .auth import ManagedIdentityToken
 from .config import LangfuseSettings, LLMSettings
 from .retrieval import HybridRetriever
 from .store import ScoredChunk
@@ -50,9 +52,35 @@ class RAGResult:
     trace_id: str | None = None
 
 
+def _bearer_auth(
+    cfg: LLMSettings, token_provider: Callable[[], str] | None
+) -> Callable[[httpx.Request], httpx.Request]:
+    """Per-request bearer token: the static API key, or a provider that is
+    asked every time so a refreshed token is picked up without a new client."""
+    if token_provider is None:
+        if cfg.auth == "azure_managed_identity":
+            token_provider = ManagedIdentityToken(cfg.azure_token_resource)
+        elif cfg.auth == "api_key":
+            api_key = cfg.api_key
+
+            def token_provider() -> str:
+                return api_key
+        else:
+            raise ValueError(
+                f"LLM__AUTH must be 'api_key' or 'azure_managed_identity', got {cfg.auth!r}"
+            )
+    provider = token_provider
+
+    def authenticate(request: httpx.Request) -> httpx.Request:
+        request.headers["Authorization"] = f"Bearer {provider()}"
+        return request
+
+    return authenticate
+
+
 class LLMClient:
-    """Minimal OpenAI-compatible chat client (OpenAI, Azure via gateway,
-    Groq, Ollama, vLLM, LiteLLM).
+    """Minimal OpenAI-compatible chat client (OpenAI, Azure OpenAI's v1
+    endpoint, Groq, Ollama, vLLM, LiteLLM).
 
     Retries on HTTP 429 (rate limit) honouring the `retry-after` header when
     present, falling back to exponential backoff otherwise — needed for free
@@ -69,11 +97,12 @@ class LLMClient:
         cfg: LLMSettings,
         transport: httpx.BaseTransport | None = None,
         telemetry: Telemetry | None = None,
+        token_provider: Callable[[], str] | None = None,
     ) -> None:
         self._cfg = cfg
         self._client = httpx.Client(
             base_url=cfg.base_url,
-            headers={"Authorization": f"Bearer {cfg.api_key}"},
+            auth=_bearer_auth(cfg, token_provider),
             timeout=cfg.timeout_s,
             transport=transport,
         )

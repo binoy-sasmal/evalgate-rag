@@ -18,7 +18,8 @@ ruff check . && ruff format --check .          # lint
 mypy src/                                      # types
 python scripts/benchmark_chunking.py --hash    # offline retrieval benchmark
 python eval/run_eval.py && python eval/check_regression.py   # full eval gate (costs tokens)
-cd terraform && terraform validate && terraform fmt -check -recursive   # IaC checks
+cd terraform && terraform validate && terraform fmt -check -recursive   # IaC checks (AWS)
+cd terraform/azure && terraform validate                                # IaC checks (Azure)
 ```
 
 ## Architecture in one paragraph
@@ -42,7 +43,8 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
    database, or model downloads. Use `HashEmbedder`, `InMemoryStore`, and fake
    LLM clients. Anything needing Postgres is `@pytest.mark.integration`.
 4. **One LLM client.** Don't add provider-specific SDKs; the OpenAI-compatible
-   client + env vars covers OpenAI, Azure (via gateway), Groq, Ollama, vLLM.
+   client + env vars covers OpenAI, Azure OpenAI (v1 endpoint), Groq, Ollama,
+   vLLM. Keyless Azure auth is `auth.py`, one GET over httpx, not azure-identity.
 5. **Write the test first** when changing chunking, retrieval, or fusion
    behaviour — these are the components the eval gate exists to protect.
 6. Keep `ruff check` and `mypy src/` clean; line length 100.
@@ -68,3 +70,4 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 | `eval/check_regression.py` | the CI gate itself |
 | `.github/workflows/eval-gate.yml` | when/how the gate runs in CI |
 | `terraform/` | single-EC2 AWS deployment; `docs/deploy-aws.md` is the runbook |
+| `terraform/azure/` | Container Apps deployment, not yet applied; `docs/deploy-azure.md` |

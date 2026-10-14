@@ -404,3 +404,93 @@ def test_llm_client_still_retries_a_genuine_rate_limit(monkeypatch):
     )
     assert client.chat("sys", "user") == "recovered"
     assert calls["n"] == 2
+
+
+# -------------------------------------------------------------------- auth
+
+
+def test_llm_client_sends_api_key_as_bearer_by_default():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        return httpx.Response(200, json=_chat_response("ok"))
+
+    LLMClient(
+        LLMSettings(base_url="https://fake/v1", api_key="sk-test"),
+        transport=httpx.MockTransport(handler),
+    ).chat("s", "u")
+    assert seen == ["Bearer sk-test"]
+
+
+def test_llm_client_asks_the_token_provider_on_every_request():
+    tokens = iter(["first", "second"])
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        return httpx.Response(200, json=_chat_response("ok"))
+
+    client = LLMClient(
+        LLMSettings(base_url="https://fake/v1", api_key="ignored"),
+        transport=httpx.MockTransport(handler),
+        token_provider=lambda: next(tokens),
+    )
+    client.chat("s", "u")
+    client.chat("s", "u")
+    assert seen == ["Bearer first", "Bearer second"]  # a rotated token is picked up
+
+
+def test_llm_client_rejects_unknown_auth_mode():
+    with pytest.raises(ValueError, match="LLM__AUTH"):
+        LLMClient(LLMSettings(auth="kerberos"))
+
+
+def _identity(handler, clock, **kwargs):
+    from evalgate_rag.auth import ManagedIdentityToken
+
+    return ManagedIdentityToken(
+        "https://cognitiveservices.azure.com",
+        endpoint="http://identity.local/token",
+        header="platform-secret",
+        transport=httpx.MockTransport(handler),
+        clock=clock,
+        **kwargs,
+    )
+
+
+def test_managed_identity_token_is_requested_cached_and_refreshed_before_expiry():
+    now = {"t": 1000.0}
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        n = len(requests)
+        return httpx.Response(
+            200, json={"access_token": f"token-{n}", "expires_on": str(int(now["t"]) + 3600)}
+        )
+
+    token = _identity(handler, lambda: now["t"], client_id="my-identity")
+
+    assert token() == "token-1"
+    first = requests[0]
+    assert first.headers["x-identity-header"] == "platform-secret"
+    assert first.url.params["resource"] == "https://cognitiveservices.azure.com"
+    assert first.url.params["client_id"] == "my-identity"
+
+    now["t"] += 3000  # 600 s of life left: still outside the refresh margin
+    assert token() == "token-1"
+    assert len(requests) == 1
+
+    now["t"] += 400  # 200 s left: inside the 300 s margin, so refresh early
+    assert token() == "token-2"
+    assert len(requests) == 2
+
+
+def test_managed_identity_outside_azure_fails_with_an_actionable_message(monkeypatch):
+    from evalgate_rag.auth import ManagedIdentityToken
+
+    monkeypatch.delenv("IDENTITY_ENDPOINT", raising=False)
+    monkeypatch.delenv("IDENTITY_HEADER", raising=False)
+    with pytest.raises(RuntimeError, match="LLM__AUTH=api_key"):
+        ManagedIdentityToken("https://cognitiveservices.azure.com")
