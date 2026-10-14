@@ -20,6 +20,9 @@ dependencies = [
     # docker-compose is Langfuse v2 (v3 SDK needs a v3 server w/ ClickHouse).
     # SDK major must match the server major.
     "langfuse>=2.53,<3",
+    # API only: every call is a no-op until an SDK is configured, so this costs
+    # nothing when TELEMETRY__ENABLED is false. The SDK is the `telemetry` extra.
+    "opentelemetry-api>=1.30",
 ]
 
 [project.optional-dependencies]
@@ -40,12 +43,20 @@ embed-local = [
     "fastembed==0.8.0",        # ONNX BGE embeddings, no torch needed
     "onnxruntime==1.18.1",     # fastembed's inference engine -- pin transitively too
 ]
+telemetry = [
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+]
 ui = [
     "streamlit>=1.36",         # demo UI client; reuses core httpx for API calls
 ]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    # The suite asserts on real spans and metrics through in-memory exporters,
+    # and builds the OTLP exporter to prove start-up never touches the network.
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
     # Minor-bounded: ruff holds formatter output stable within a minor but not
     # across one, so an unpinned `>=` lets CI red the build on code nobody
     # touched. 0.16 did exactly that -- it began formatting Python code blocks

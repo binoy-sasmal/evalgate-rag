@@ -1,21 +1,27 @@
-"""RAG pipeline: retrieve → prompt → generate, with optional Langfuse tracing.
+"""RAG pipeline: retrieve → prompt → generate, with optional Langfuse tracing
+and OpenTelemetry spans and metrics.
 
-Tracing is a no-op unless LANGFUSE__ENABLED=true, so unit tests and local
-runs never require a Langfuse instance.
+Both are no-ops unless enabled (LANGFUSE__ENABLED / TELEMETRY__ENABLED), so
+unit tests and local runs never require a Langfuse instance or a collector.
 """
 
 from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
+from .auth import ManagedIdentityToken
 from .config import LangfuseSettings, LLMSettings
 from .retrieval import HybridRetriever
 from .store import ScoredChunk
+from .telemetry import Telemetry
 
 MAX_RETRIES = 5
 INITIAL_BACKOFF_S = 1.0
@@ -46,9 +52,35 @@ class RAGResult:
     trace_id: str | None = None
 
 
+def _bearer_auth(
+    cfg: LLMSettings, token_provider: Callable[[], str] | None
+) -> Callable[[httpx.Request], httpx.Request]:
+    """Per-request bearer token: the static API key, or a provider that is
+    asked every time so a refreshed token is picked up without a new client."""
+    if token_provider is None:
+        if cfg.auth == "azure_managed_identity":
+            token_provider = ManagedIdentityToken(cfg.azure_token_resource)
+        elif cfg.auth == "api_key":
+            api_key = cfg.api_key
+
+            def token_provider() -> str:
+                return api_key
+        else:
+            raise ValueError(
+                f"LLM__AUTH must be 'api_key' or 'azure_managed_identity', got {cfg.auth!r}"
+            )
+    provider = token_provider
+
+    def authenticate(request: httpx.Request) -> httpx.Request:
+        request.headers["Authorization"] = f"Bearer {provider()}"
+        return request
+
+    return authenticate
+
+
 class LLMClient:
-    """Minimal OpenAI-compatible chat client (OpenAI, Azure via gateway,
-    Groq, Ollama, vLLM, LiteLLM).
+    """Minimal OpenAI-compatible chat client (OpenAI, Azure OpenAI's v1
+    endpoint, Groq, Ollama, vLLM, LiteLLM).
 
     Retries on HTTP 429 (rate limit) honouring the `retry-after` header when
     present, falling back to exponential backoff otherwise — needed for free
@@ -60,15 +92,28 @@ class LLMClient:
     retried — waiting once more inside this process won't clear it.
     """
 
-    def __init__(self, cfg: LLMSettings, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        cfg: LLMSettings,
+        transport: httpx.BaseTransport | None = None,
+        telemetry: Telemetry | None = None,
+        token_provider: Callable[[], str] | None = None,
+    ) -> None:
         self._cfg = cfg
         self._client = httpx.Client(
             base_url=cfg.base_url,
-            headers={"Authorization": f"Bearer {cfg.api_key}"},
+            auth=_bearer_auth(cfg, token_provider),
             timeout=cfg.timeout_s,
             transport=transport,
         )
         self._last_request_at: float | None = None
+        self._telemetry = telemetry or Telemetry()
+        # Low-cardinality attributes shared by the span and every metric point.
+        self._attributes: dict[str, Any] = {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": cfg.model,
+            "server.address": httpx.URL(cfg.base_url).host,
+        }
 
     def _throttle(self) -> None:
         if self._cfg.min_interval_s <= 0 or self._last_request_at is None:
@@ -79,6 +124,50 @@ class LLMClient:
             time.sleep(remaining)
 
     def chat(self, system: str, user: str) -> str:
+        """One chat completion. The span and duration cover the whole call,
+        retries and backoff included, because that is the latency a caller
+        actually waits for."""
+        started = time.perf_counter()
+        error_type: str | None = None
+        usage: dict[str, Any] = {}
+        with self._telemetry.span(
+            f"chat {self._cfg.model}",
+            kind=SpanKind.CLIENT,
+            attributes={
+                **self._attributes,
+                "gen_ai.request.temperature": self._cfg.temperature,
+                "gen_ai.request.max_tokens": self._cfg.max_tokens,
+            },
+        ) as span:
+            try:
+                body = self._complete(system, user)
+            except httpx.HTTPStatusError as exc:
+                error_type = str(exc.response.status_code)
+                raise
+            except Exception as exc:
+                error_type = type(exc).__name__
+                raise
+            else:
+                usage = body.get("usage") or {}
+                if body.get("model"):
+                    span.set_attribute("gen_ai.response.model", body["model"])
+                if usage.get("prompt_tokens") is not None:
+                    span.set_attribute("gen_ai.usage.input_tokens", usage["prompt_tokens"])
+                if usage.get("completion_tokens") is not None:
+                    span.set_attribute("gen_ai.usage.output_tokens", usage["completion_tokens"])
+                return body["choices"][0]["message"]["content"]
+            finally:
+                if error_type is not None:
+                    span.set_attribute("error.type", error_type)
+                self._telemetry.record_llm_call(
+                    time.perf_counter() - started,
+                    self._attributes,
+                    input_tokens=usage.get("prompt_tokens"),
+                    output_tokens=usage.get("completion_tokens"),
+                    error_type=error_type,
+                )
+
+    def _complete(self, system: str, user: str) -> dict[str, Any]:
         backoff = INITIAL_BACKOFF_S
         for attempt in range(MAX_RETRIES + 1):
             self._throttle()
@@ -92,6 +181,7 @@ class LLMClient:
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
+                    **self._optional_params(),
                 },
             )
             self._last_request_at = time.monotonic()
@@ -125,12 +215,22 @@ class LLMClient:
                     f"retrying in {wait_s:.1f}s -- {self._describe_limit(resp)}",
                     file=sys.stderr,
                 )
+                self._telemetry.record_llm_retry(self._attributes, reason="rate_limited")
+                trace.get_current_span().add_event("rate_limited", {"retry.wait_s": wait_s})
                 time.sleep(wait_s)
                 backoff *= 2
                 continue
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+            return resp.json()
         raise RuntimeError("unreachable")  # pragma: no cover
+
+    def _optional_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if self._cfg.reasoning_effort:
+            params["reasoning_effort"] = self._cfg.reasoning_effort
+        if self._cfg.json_mode:
+            params["response_format"] = {"type": "json_object"}
+        return params
 
     @staticmethod
     def _is_oversized_request(resp: httpx.Response) -> bool:
@@ -215,11 +315,13 @@ class RAGPipeline:
         llm: LLMClient,
         tracer: Tracer,
         top_k: int = 4,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._retriever = retriever
         self._llm = llm
         self._tracer = tracer
         self._top_k = top_k
+        self._telemetry = telemetry or Telemetry()
 
     def answer(self, question: str, top_k: int | None = None) -> RAGResult:
         """Answer one question. `top_k` overrides the configured default for
@@ -228,10 +330,32 @@ class RAGPipeline:
         requests (FastAPI runs the sync `/query` handler in a threadpool), so
         mutating `self._top_k` per request let one caller's override leak into
         another's answer."""
-        contexts = self._retriever.retrieve(question, top_k=self._top_k if top_k is None else top_k)
-        context_block = "\n\n---\n\n".join(f"[{c.chunk.doc_id}]\n{c.chunk.text}" for c in contexts)
-        answer = self._llm.chat(
-            SYSTEM_PROMPT, PROMPT_TEMPLATE.format(context=context_block, question=question)
-        )
-        trace_id = self._tracer.trace_query(question, contexts, answer, model=self._llm._cfg.model)
-        return RAGResult(answer=answer, contexts=contexts, trace_id=trace_id)
+        k = self._top_k if top_k is None else top_k
+        started = time.perf_counter()
+        error_type: str | None = None
+        with self._telemetry.span("rag.query", attributes={"rag.top_k": k}) as span:
+            try:
+                with self._telemetry.span("rag.retrieval") as retrieval_span:
+                    retrieval_started = time.perf_counter()
+                    contexts = self._retriever.retrieve(question, top_k=k)
+                    self._telemetry.record_retrieval(time.perf_counter() - retrieval_started)
+                    retrieval_span.set_attribute("rag.retrieval.returned", len(contexts))
+                context_block = "\n\n---\n\n".join(
+                    f"[{c.chunk.doc_id}]\n{c.chunk.text}" for c in contexts
+                )
+                answer = self._llm.chat(
+                    SYSTEM_PROMPT, PROMPT_TEMPLATE.format(context=context_block, question=question)
+                )
+                trace_id = self._tracer.trace_query(
+                    question, contexts, answer, model=self._llm._cfg.model
+                )
+                if trace_id is not None:
+                    # Lets an operator jump from a slow span to the Langfuse
+                    # trace that holds the prompt and answer.
+                    span.set_attribute("langfuse.trace_id", trace_id)
+                return RAGResult(answer=answer, contexts=contexts, trace_id=trace_id)
+            except Exception as exc:
+                error_type = type(exc).__name__
+                raise
+            finally:
+                self._telemetry.record_query(time.perf_counter() - started, error_type)

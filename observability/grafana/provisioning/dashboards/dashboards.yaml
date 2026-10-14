@@ -1,0 +1,7 @@
+apiVersion: 1
+
+providers:
+  - name: evalgate-rag
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

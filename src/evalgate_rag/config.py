@@ -31,6 +31,11 @@ class LLMSettings(BaseModel):
 
     base_url: str = "https://api.groq.com/openai/v1"
     api_key: str = "unset"
+    # "api_key" sends api_key as the bearer token. "azure_managed_identity"
+    # ignores api_key and sends a short-lived Microsoft Entra ID token fetched
+    # from the platform (see auth.py), for Azure OpenAI with key access disabled.
+    auth: str = "api_key"
+    azure_token_resource: str = "https://cognitiveservices.azure.com"
     # Was llama-3.3-70b-versatile until Groq decommissioned it (the whole Llama
     # chat lineup went; /v1/models now answers 404 model_not_found for it). A
     # hosted model can't be pinned the way a package can, so this default WILL
@@ -51,6 +56,10 @@ class LLMSettings(BaseModel):
     # is. Answers here run ~30 tokens, so 512 is generous and still fits.
     max_tokens: int = 512
     min_interval_s: float = 0.0  # throttle between requests, e.g. to stay under a TPM cap
+    # Sent only when set. reasoning_effort is for reasoning models such as
+    # gpt-oss; json_mode asks the provider for a JSON object (response_format).
+    reasoning_effort: str | None = None
+    json_mode: bool = False
 
 
 class EmbeddingSettings(BaseModel):
@@ -74,6 +83,45 @@ class LangfuseSettings(BaseModel):
     secret_key: str = ""
 
 
+class JudgeSettings(LLMSettings):
+    """The answer-correctness judge (judge.py): an LLM endpoint of its own.
+
+    Defaults to a different model family from the answering model, so the
+    judge is not grading its own family's answers, and on Groq a different
+    model also draws on a separate daily token quota. An unset api_key falls
+    back to LLM__API_KEY (see judge_llm_settings).
+    """
+
+    model: str = "openai/gpt-oss-120b"
+    # gpt-oss spends output tokens on reasoning before the verdict; low effort
+    # keeps that short, and the ceiling leaves room for it.
+    reasoning_effort: str | None = "low"
+    json_mode: bool = True
+    max_tokens: int = 1024
+    min_interval_s: float = 2.0
+
+
+class RerankSettings(BaseModel):
+    """Optional cross-encoder reranking of the hybrid-retrieval pool (rerank.py)."""
+
+    enabled: bool = False
+    model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    # How many RRF-fused chunks the cross-encoder reorders before the top_k cut.
+    candidates: int = 20
+    cache_dir: str | None = None
+
+
+class TelemetrySettings(BaseModel):
+    """OpenTelemetry traces and metrics, exported over OTLP/HTTP."""
+
+    enabled: bool = False
+    # Collector base URL, e.g. http://localhost:4318. Left unset, the exporters
+    # use the standard OTEL_EXPORTER_OTLP_* environment variables instead.
+    otlp_endpoint: str | None = None
+    service_name: str = "evalgate-rag"
+    export_interval_s: int = 15
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_nested_delimiter="__", extra="ignore")
 
@@ -81,6 +129,9 @@ class Settings(BaseSettings):
     llm: LLMSettings = LLMSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
+    telemetry: TelemetrySettings = TelemetrySettings()
+    rerank: RerankSettings = RerankSettings()
+    judge: JudgeSettings = JudgeSettings()
 
     retrieval_top_k: int = 4
     rrf_k: int = 60  # reciprocal-rank-fusion constant
@@ -88,3 +139,11 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     return Settings()
+
+
+def judge_llm_settings(cfg: Settings) -> LLMSettings:
+    """The judge's endpoint settings, borrowing the main LLM key when the
+    judge has none of its own."""
+    if cfg.judge.api_key == "unset":
+        return cfg.judge.model_copy(update={"api_key": cfg.llm.api_key})
+    return cfg.judge

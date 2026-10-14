@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-14",
+  "judge_model": "openai/gpt-oss-120b",
+  "reasoning_effort": "low",
+  "run": 1,
+  "cases": 80,
+  "scored": 80,
+  "unparsed": [],
+  "labels_human_reviewed": 20,
+  "real_answers_labelled": 20,
+  "overall": {
+    "n": 80,
+    "accuracy": 0.9625,
+    "balanced_accuracy": 0.9623,
+    "cohen_kappa": 0.9154,
+    "false_pass_rate": 0.037,
+    "false_fail_rate": 0.0385,
+    "true_pass": 25,
+    "true_fail": 52,
+    "false_pass": 2,
+    "false_fail": 1
+  },
+  "by_kind": {
+    "paraphrase": {
+      "n": 20,
+      "agreement": 0.95
+    },
+    "perturbed": {
+      "n": 20,
+      "agreement": 1.0
+    },
+    "swapped": {
+      "n": 20,
+      "agreement": 1.0
+    },
+    "real": {
+      "n": 20,
+      "agreement": 0.9
+    }
+  },
+  "disagreements": [
+    {
+      "case_id": "4-paraphrase",
+      "label": "PASS",
+      "judge": "FAIL",
+      "judge_reason": "Omitted 'asylum' from the listed high-risk areas"
+    },
+    {
+      "case_id": "10-real",
+      "label": "FAIL",
+      "judge": "PASS",
+      "judge_reason": "Correctly states the >10^25 FLOPs threshold and Article 51"
+    },
+    {
+      "case_id": "20-real",
+      "label": "FAIL",
+      "judge": "PASS",
+      "judge_reason": "Includes all central logging requirements from reference without contradiction"
+    }
+  ]
+}

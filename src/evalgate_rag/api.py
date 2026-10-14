@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 from .config import Settings, get_settings
 from .embeddings import make_embedder
 from .pipeline import LLMClient, RAGPipeline, Tracer
+from .rerank import make_reranker
 from .retrieval import HybridRetriever
 from .store import PgVectorStore
+from .telemetry import make_telemetry
 
 
 class QueryRequest(BaseModel):
@@ -38,21 +40,32 @@ def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = N
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.store = None
+        telemetry = None
         if pipeline is not None:
             app.state.pipeline = pipeline
         else:
             embedder = make_embedder(cfg.embedding)
             store = PgVectorStore(cfg.db.dsn, dimension=embedder.dimension)
-            retriever = HybridRetriever(store, embedder, rrf_k=cfg.rrf_k)
+            retriever = HybridRetriever(
+                store,
+                embedder,
+                rrf_k=cfg.rrf_k,
+                reranker=make_reranker(cfg.rerank),
+                rerank_candidates=cfg.rerank.candidates,
+            )
             retriever.refresh_bm25()
+            telemetry = make_telemetry(cfg.telemetry)
             app.state.store = store
             app.state.pipeline = RAGPipeline(
                 retriever,
-                LLMClient(cfg.llm),
+                LLMClient(cfg.llm, telemetry=telemetry),
                 Tracer(cfg.langfuse),
                 top_k=cfg.retrieval_top_k,
+                telemetry=telemetry,
             )
         yield
+        if telemetry is not None:
+            telemetry.shutdown()
         if app.state.store is not None:
             app.state.store.close()
 

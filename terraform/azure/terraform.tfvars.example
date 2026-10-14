@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+subscription_id           = "00000000-0000-0000-0000-000000000000" # az account show --query id -o tsv
+allowed_cidr              = "203.0.113.4/32"                       # "$(curl -s ifconfig.me)/32"
+budget_notification_email = "you@example.com"
+
+# Optional overrides; see variables.tf for the reasoning behind each default.
+# location        = "swedencentral"
+# openai_location = "swedencentral"
+# min_replicas    = 0
