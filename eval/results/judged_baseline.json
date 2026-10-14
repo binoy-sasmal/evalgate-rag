@@ -1,0 +1,150 @@
+{
+  "arm": "baseline",
+  "answer_model": "qwen/qwen3.8-27b",
+  "judge_model": "openai/gpt-oss-120b",
+  "rerank": null,
+  "judged": 20,
+  "pass_rate": 0.3,
+  "failed": {
+    "1": {
+      "gold": "Article 5",
+      "retrieved": [
+        "Article 5",
+        "Article 4",
+        "Article 5",
+        "Article 54"
+      ],
+      "reason": "Missing multiple prohibited practices listed in reference"
+    },
+    "2": {
+      "gold": "Article 99",
+      "retrieved": [
+        "Article 5",
+        "Article 99",
+        "Article 100",
+        "Article 101"
+      ],
+      "reason": "Adds incorrect additional fine amounts and article references not in the reference"
+    },
+    "3": {
+      "gold": "Article 6",
+      "retrieved": [
+        "Article 80",
+        "Article 50",
+        "Article 15",
+        "Article 2"
+      ],
+      "reason": "Candidate does not state the reference criteria for high‑risk classification"
+    },
+    "4": {
+      "gold": "Annex III",
+      "retrieved": [
+        "Article 7",
+        "Article 49",
+        "Article 27",
+        "Article 43"
+      ],
+      "reason": "Candidate did not provide the listed high-risk areas"
+    },
+    "6": {
+      "gold": "Article 10",
+      "retrieved": [
+        "Article 10",
+        "Article 15",
+        "Article 74",
+        "Article 54"
+      ],
+      "reason": "Missing key requirements of relevance, representativeness, error‑free and completeness stated in the reference"
+    },
+    "7": {
+      "gold": "Article 14",
+      "retrieved": [
+        "Article 14",
+        "Article 14",
+        "Article 26",
+        "Article 15"
+      ],
+      "reason": "Missing required oversight actions like deciding not to use or reverse output and stop button"
+    },
+    "9": {
+      "gold": "Article 50",
+      "retrieved": [
+        "Article 41",
+        "Article 15",
+        "Article 37",
+        "Article 43"
+      ],
+      "reason": "Candidate provides no answer, omitting the required disclosure requirement under Article 50"
+    },
+    "10": {
+      "gold": "Article 51",
+      "retrieved": [
+        "Article 51",
+        "Article 52",
+        "Article 55",
+        "Article 52"
+      ],
+      "reason": "Omitted the alternative condition that the Commission may designate the model as systemic risk"
+    },
+    "11": {
+      "gold": "Article 53",
+      "retrieved": [
+        "Article 53",
+        "Article 53",
+        "Annex XI",
+        "Article 55"
+      ],
+      "reason": "Missing required obligations on copyright policy and training‑data summary"
+    },
+    "13": {
+      "gold": "Article 13",
+      "retrieved": [
+        "Article 13",
+        "Article 26",
+        "Article 26",
+        "Article 49"
+      ],
+      "reason": "Missing required transparency details such as system characteristics, capabilities, limitations, oversight measures, lifetime, and maintenance"
+    },
+    "14": {
+      "gold": "Article 15",
+      "retrieved": [
+        "Article 15",
+        "Article 13",
+        "Article 15",
+        "Article 54"
+      ],
+      "reason": "Candidate adds incorrect extra requirements not in reference"
+    },
+    "16": {
+      "gold": "Article 49",
+      "retrieved": [
+        "Article 49",
+        "Article 71",
+        "Article 49",
+        "Article 26"
+      ],
+      "reason": "Adds incorrect conditions and exclusions not in reference"
+    },
+    "18": {
+      "gold": "Article 64",
+      "retrieved": [
+        "Article 64",
+        "Article 100",
+        "Article 56",
+        "Article 76"
+      ],
+      "reason": "Includes incorrect additional roles from Article 56 not in reference"
+    },
+    "20": {
+      "gold": "Article 12",
+      "retrieved": [
+        "Article 12",
+        "Article 19",
+        "Article 17",
+        "Article 15"
+      ],
+      "reason": "Adds unsupported six‑month log retention requirement not in reference"
+    }
+  }
+}

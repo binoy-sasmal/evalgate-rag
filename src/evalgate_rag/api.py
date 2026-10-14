@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .config import Settings, get_settings
 from .embeddings import make_embedder
 from .pipeline import LLMClient, RAGPipeline, Tracer
+from .rerank import make_reranker
 from .retrieval import HybridRetriever
 from .store import PgVectorStore
 from .telemetry import make_telemetry
@@ -45,7 +46,13 @@ def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = N
         else:
             embedder = make_embedder(cfg.embedding)
             store = PgVectorStore(cfg.db.dsn, dimension=embedder.dimension)
-            retriever = HybridRetriever(store, embedder, rrf_k=cfg.rrf_k)
+            retriever = HybridRetriever(
+                store,
+                embedder,
+                rrf_k=cfg.rrf_k,
+                reranker=make_reranker(cfg.rerank),
+                rerank_candidates=cfg.rerank.candidates,
+            )
             retriever.refresh_bm25()
             telemetry = make_telemetry(cfg.telemetry)
             app.state.store = store

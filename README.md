@@ -375,6 +375,88 @@ retrieved (hybrid retrieval, top-4). Reproduce with
 meaningless scores. Recursive wins on MRR with fewer chunks than semantic, which is why
 it's the default ingest strategy.</sub>
 
+## Reranking benchmark
+
+A local cross-encoder (`RERANK__ENABLED=true`, fastembed's ONNX runtime, no
+API calls) can reorder a 20-chunk pool from hybrid retrieval before the top-4
+cut. Reproduce with `python scripts/benchmark_rerank.py --candidates 10 20`.
+
+| Retrieval | hit@1 | hit@4 | MRR@4 | ms/query |
+|---|---|---|---|---|
+| hybrid (RRF only) | 0.75 | 0.85 | 0.80 | 24 |
+| + ms-marco-MiniLM-L-6-v2, pool 10 | 0.80 | 0.85 | 0.82 | 206 |
+| + ms-marco-MiniLM-L-6-v2, pool 20 | 0.80 | 0.85 | 0.82 | 422 |
+| + ms-marco-MiniLM-L-12-v2, pool 10 | 0.80 | 0.85 | 0.82 | 388 |
+| + ms-marco-MiniLM-L-12-v2, pool 20 | 0.80 | 0.85 | 0.82 | 795 |
+
+<sub>Golden set, recursive chunks, local fastembed embeddings, measured 2026-10-14 on a laptop CPU.</sub>
+
+**Reranking is off by default, because it does not earn its cost here.** It
+moved two questions up to rank 1 and one down to rank 2: a net change of one
+question in twenty, which is the noise floor of this golden set, for 10 to 30
+times the retrieval latency. Neither model nor pool size changed that.
+
+The interesting result is why. The three questions every variant misses are
+**recall** failures, which no reranker can fix: for "When does an AI system
+count as high-risk?" Article 6 is not in the fused top 50 at all, and Annex
+III sits at rank 32, outside any pool tried. Only the deepfake question had
+its gold article (Article 50, rank 15) within reach, and the cross-encoder
+did not lift it. The next retrieval improvement is first-stage recall, not
+reordering.
+
+## Answer-correctness judge
+
+Ragas' faithfulness asks whether an answer is supported by what was
+retrieved, which a confidently wrong answer built on the wrong chunk passes.
+[`judge.py`](src/evalgate_rag/judge.py) asks whether the answer states what
+the golden set's reference says, without contradicting it, and returns PASS
+or FAIL with the deciding fact.
+
+The judge is a different model family from the answering model
+(`openai/gpt-oss-120b` against `qwen/qwen3.8-27b`), so it is not grading its
+own family's answers.
+
+**Calibrated before use.** [`eval/judge_calibration.jsonl`](eval/judge_calibration.jsonl)
+holds 60 candidate answers whose correct verdict is known by construction:
+for each golden question, a paraphrase of the reference (PASS), the same
+answer with one central fact changed (FAIL, the planted error is recorded),
+and a correct answer to a different question (FAIL).
+`python eval/calibrate_judge.py` scores the judge against them.
+
+| Run (2026-10-14) | Accuracy | Cohen's kappa | False passes | False fails |
+|---|---|---|---|---|
+| 1 | 0.967 | 0.923 | 0 of 40 | 2 of 20 |
+| 2 | 0.983 | 0.962 | 0 of 40 | 1 of 20 |
+| 3 | 0.983 | 0.962 | 0 of 40 | 1 of 20 |
+
+It caught every planted error, including 10^23 for 10^25 FLOPs and EUR 15
+million for 35 million, in all three runs. Every false fail was a paraphrase
+that shortened an enumerated list, and the one verdict that changed between
+runs was one of those: the judge is strict about complete lists, and
+borderline there. Those labels are unreviewed, so they may be what is wrong.
+
+**And then it met real answers.** Run over the pipeline's 20 real answers
+(`python eval/judge_answers.py --arm baseline`), it passed only 6. Reading the
+failures, that number is not trustworthy yet:
+
+- It correctly failed all three questions whose gold article retrieval never
+  finds (see the reranking benchmark), an independent cross-check.
+- It also failed answers that were right and then added correct detail the
+  reference does not contain, for example the separate Article 100 fine for
+  EU institutions alongside the correct EUR 35 million or 7 %.
+
+No constructed case covered "correct, plus extra correct detail", so the
+calibration above overstates agreement on real answers. The fix is human
+labels on real answers, not tuning the prompt against the same 20 answers it
+would then be scored on. [`eval/judge_real_answers.jsonl`](eval/judge_real_answers.jsonl)
+holds them with the judge's verdict and reason; each one given a `label`
+joins the calibration as kind `real`, and agreement on that kind is the
+figure to trust.
+
+**Reported, not gated.** `eval/check_regression.py` and `eval/baseline.json`
+are unchanged. The pass rate becomes a gate only after the labels are
+reviewed and a person promotes a baseline.
+
 ## Golden set methodology
 
 `data/golden_set.jsonl` holds 20 hand-curated question/ground-truth pairs across
@@ -403,9 +485,10 @@ This repository is built agent-first, and the workflow is part of the design:
 ## Project layout
 
 ```
-src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · auth · telemetry · api
-scripts/              fetch_corpus · ingest · benchmark_chunking · generate_golden_set
+src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · rerank · judge · auth · telemetry · api
+scripts/              fetch_corpus · ingest · benchmark_chunking · benchmark_rerank · generate_golden_set
 eval/                 run_eval (Ragas) · check_regression (the gate) · baseline.json
+                      calibrate_judge · judge_answers · judge label sets
 data/                 golden_set.jsonl · corpus/ (EU AI Act, committed)
 tests/                offline unit tests + pgvector integration tests
 terraform/            single-instance AWS deployment (Free Tier)

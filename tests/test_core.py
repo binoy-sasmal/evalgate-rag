@@ -98,6 +98,58 @@ def test_hybrid_retrieval_on_empty_store_returns_no_results():
     assert retriever.retrieve("anything", top_k=4) == []
 
 
+class KeywordReranker:
+    """Scores a chunk by whether it mentions a keyword, so the expected order
+    is known regardless of what BM25 and the dense leg think."""
+
+    def __init__(self, keyword: str) -> None:
+        self.keyword = keyword
+        self.seen: list[list[str]] = []
+
+    def rerank(self, query: str, texts: list[str]) -> list[float]:
+        self.seen.append(list(texts))
+        return [1.0 if self.keyword in t else 0.0 for t in texts]
+
+
+def test_reranker_decides_the_final_order():
+    retriever = _build_retriever()
+    # Lexically and semantically this question is about fines; the fake
+    # reranker prefers the oversight article, so it must come first.
+    retriever._reranker = KeywordReranker("oversight")  # type: ignore[attr-defined]
+    results = retriever.retrieve("What fines apply for violations?", top_k=2)
+    assert results[0].chunk.doc_id == "Article 14"
+    assert results[0].score == 1.0  # the reranker's score, not the RRF score
+
+
+def test_reranker_sees_a_candidate_pool_wider_than_top_k():
+    embedder = HashEmbedder()
+    store = InMemoryStore()
+    for i in range(30):
+        chunks = chunk_recursive(f"Article text number {i} about obligations.", f"A{i}", 500)
+        store.upsert(chunks, embedder.embed([c.text for c in chunks]))
+    reranker = KeywordReranker("never-present")
+    retriever = HybridRetriever(store, embedder, reranker=reranker, rerank_candidates=12)
+    retriever.refresh_bm25()
+
+    results = retriever.retrieve("obligations", top_k=3)
+    assert len(results) == 3
+    assert len(reranker.seen[0]) == 12  # reranks the pool, then cuts to top_k
+
+
+def test_reranker_pool_is_never_smaller_than_top_k():
+    reranker = KeywordReranker("x")
+    retriever = HybridRetriever(
+        InMemoryStore(), HashEmbedder(), reranker=reranker, rerank_candidates=2
+    )
+    store = retriever._store  # type: ignore[attr-defined]
+    for i in range(6):
+        chunks = chunk_recursive(f"Provider duty {i} applies.", f"B{i}", 500)
+        store.upsert(chunks, HashEmbedder().embed([c.text for c in chunks]))
+    retriever.refresh_bm25()
+    assert len(retriever.retrieve("provider duty", top_k=5)) == 5
+    assert len(reranker.seen[0]) == 5
+
+
 # --------------------------------------------------------------------- api
 
 

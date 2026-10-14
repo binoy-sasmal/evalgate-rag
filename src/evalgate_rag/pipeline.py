@@ -181,6 +181,7 @@ class LLMClient:
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
+                    **self._optional_params(),
                 },
             )
             self._last_request_at = time.monotonic()
@@ -222,6 +223,14 @@ class LLMClient:
             resp.raise_for_status()
             return resp.json()
         raise RuntimeError("unreachable")  # pragma: no cover
+
+    def _optional_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if self._cfg.reasoning_effort:
+            params["reasoning_effort"] = self._cfg.reasoning_effort
+        if self._cfg.json_mode:
+            params["response_format"] = {"type": "json_object"}
+        return params
 
     @staticmethod
     def _is_oversized_request(resp: httpx.Response) -> bool:

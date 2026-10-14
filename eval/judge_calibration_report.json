@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-14",
+  "judge_model": "openai/gpt-oss-120b",
+  "reasoning_effort": "low",
+  "run": 1,
+  "cases": 60,
+  "scored": 60,
+  "unparsed": [],
+  "labels_human_reviewed": 0,
+  "real_answers_labelled": 0,
+  "overall": {
+    "n": 60,
+    "accuracy": 0.9833,
+    "balanced_accuracy": 0.975,
+    "cohen_kappa": 0.962,
+    "false_pass_rate": 0.0,
+    "false_fail_rate": 0.05,
+    "true_pass": 19,
+    "true_fail": 40,
+    "false_pass": 0,
+    "false_fail": 1
+  },
+  "by_kind": {
+    "paraphrase": {
+      "n": 20,
+      "agreement": 0.95
+    },
+    "perturbed": {
+      "n": 20,
+      "agreement": 1.0
+    },
+    "swapped": {
+      "n": 20,
+      "agreement": 1.0
+    }
+  },
+  "disagreements": [
+    {
+      "case_id": "4-paraphrase",
+      "label": "PASS",
+      "judge": "FAIL",
+      "judge_reason": "Omitted 'asylum' from the listed high-risk areas"
+    }
+  ]
+}

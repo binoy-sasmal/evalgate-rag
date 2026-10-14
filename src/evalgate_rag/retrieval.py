@@ -6,6 +6,7 @@ implemented directly for transparency and testability.
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
 from rank_bm25 import BM25Okapi
 
@@ -24,11 +25,26 @@ def _key(c: Chunk) -> tuple[str, int]:
     return (c.doc_id, c.seq)
 
 
+class Reranker(Protocol):
+    def rerank(self, query: str, texts: list[str]) -> list[float]:
+        """One relevance score per text, higher is better, same order as given."""
+        ...
+
+
 class HybridRetriever:
-    def __init__(self, store: Store, embedder: Embedder, rrf_k: int = 60) -> None:
+    def __init__(
+        self,
+        store: Store,
+        embedder: Embedder,
+        rrf_k: int = 60,
+        reranker: Reranker | None = None,
+        rerank_candidates: int = 20,
+    ) -> None:
         self._store = store
         self._embedder = embedder
         self._rrf_k = rrf_k
+        self._reranker = reranker
+        self._rerank_candidates = rerank_candidates
         self._bm25: BM25Okapi | None = None
         self._bm25_chunks: list[Chunk] = []
         self._bm25_built = False
@@ -53,10 +69,28 @@ class HybridRetriever:
         return [ScoredChunk(c, float(s)) for c, s in ranked if s > 0]
 
     def retrieve(self, query: str, top_k: int = 4) -> list[ScoredChunk]:
-        """RRF over BM25 and dense rankings; each leg fetches 2*top_k candidates."""
-        candidates = max(top_k * 2, top_k)
-        dense = self._store.dense_search(self._embedder.embed([query])[0], top_k=candidates)
-        sparse = self._bm25_search(query, top_k=candidates)
+        """RRF over BM25 and dense rankings; each leg fetches 2*top_k candidates.
+
+        With a reranker, RRF instead produces a wider pool of
+        `rerank_candidates` (never fewer than top_k), the cross-encoder scores
+        each (query, chunk) pair jointly, and its order decides the top_k.
+        RRF only sees each leg's rank, so it cannot tell a chunk that merely
+        shares the question's vocabulary from one that answers it; reading
+        both texts together can.
+        """
+        if self._reranker is None:
+            return self._fuse(query, pool=top_k, per_leg=max(top_k * 2, top_k))
+        pool = max(self._rerank_candidates, top_k)
+        candidates = self._fuse(query, pool=pool, per_leg=pool)
+        if not candidates:
+            return []
+        scores = self._reranker.rerank(query, [sc.chunk.text for sc in candidates])
+        ranked = sorted(zip(candidates, scores, strict=True), key=lambda t: -t[1])[:top_k]
+        return [ScoredChunk(sc.chunk, float(score)) for sc, score in ranked]
+
+    def _fuse(self, query: str, pool: int, per_leg: int) -> list[ScoredChunk]:
+        dense = self._store.dense_search(self._embedder.embed([query])[0], top_k=per_leg)
+        sparse = self._bm25_search(query, top_k=per_leg)
 
         fused: dict[tuple[str, int], float] = {}
         chunks: dict[tuple[str, int], Chunk] = {}
@@ -65,5 +99,5 @@ class HybridRetriever:
                 k = _key(sc.chunk)
                 fused[k] = fused.get(k, 0.0) + 1.0 / (self._rrf_k + rank + 1)
                 chunks[k] = sc.chunk
-        best = sorted(fused.items(), key=lambda kv: -kv[1])[:top_k]
+        best = sorted(fused.items(), key=lambda kv: -kv[1])[:pool]
         return [ScoredChunk(chunks[k], score) for k, score in best]

@@ -17,6 +17,8 @@ RUN_PG_TESTS=1 pytest -q -m integration        # needs: docker compose up -d db
 ruff check . && ruff format --check .          # lint
 mypy src/                                      # types
 python scripts/benchmark_chunking.py --hash    # offline retrieval benchmark
+python scripts/benchmark_rerank.py             # reranking vs hybrid (local, no tokens)
+python eval/calibrate_judge.py                 # judge agreement on labelled cases (judge tokens)
 python eval/run_eval.py && python eval/check_regression.py   # full eval gate (costs tokens)
 cd terraform && terraform validate && terraform fmt -check -recursive   # IaC checks (AWS)
 cd terraform/azure && terraform validate                                # IaC checks (Azure)
@@ -57,6 +59,13 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
    on. Don't widen `allowed_cidr` to `0.0.0.0/0` without adding an API key check.
 9. **No prompt, context or answer text on an OpenTelemetry span.** Timings,
    counts and token usage only; content belongs in Langfuse.
+10. **Never change a judge calibration label to agree with the judge.** The
+    labels in `eval/judge_calibration.jsonl` and `eval/judge_real_answers.jsonl`
+    are the measuring stick; only a human sets `label` or `review_status`.
+    The judge's pass rate is reported, not gated, until a human promotes it.
+11. **Do not tune the judge prompt on the answers it will then be scored on.**
+    Validate a prompt change against the full calibration set, labelled real
+    answers included, and regenerate the report.
 
 ## Files agents most often need
 
@@ -68,6 +77,8 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 | `src/evalgate_rag/telemetry.py` | OpenTelemetry spans and metrics; `observability/` is the local stack |
 | `eval/run_eval.py` | Ragas suite over the golden set |
 | `eval/check_regression.py` | the CI gate itself |
+| `src/evalgate_rag/judge.py` | answer-correctness judge; `eval/calibrate_judge.py` calibrates it |
+| `src/evalgate_rag/rerank.py` | optional cross-encoder; `scripts/benchmark_rerank.py` measures it |
 | `.github/workflows/eval-gate.yml` | when/how the gate runs in CI |
 | `terraform/` | single-EC2 AWS deployment; `docs/deploy-aws.md` is the runbook |
 | `terraform/azure/` | Container Apps deployment, not yet applied; `docs/deploy-azure.md` |
