@@ -246,7 +246,8 @@ Azure Container Apps for the API, Azure OpenAI for the model, PostgreSQL
 Flexible Server with pgvector, and Application Insights receiving the
 OpenTelemetry stream described below.
 
-**It is written and statically validated, not yet applied.** `terraform
+**Deployment is parked because the Azure student free account was unavailable (2026-10-14).**
+The infrastructure is written and statically validated, not yet applied. `terraform
 validate` passes and the pieces that can be tested offline are, but no resource
 has been created in a real subscription. [`docs/deploy-azure.md`](docs/deploy-azure.md)
 is the runbook and says the same thing at the top.

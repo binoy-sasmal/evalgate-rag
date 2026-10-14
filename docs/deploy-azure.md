@@ -1,5 +1,8 @@
 # Deploying evalgate-rag to Azure
 
+> **Parked (2026-10-14):** the Azure student free account was unavailable.
+> Deployment remains design-only until the owner chooses to resume.
+
 > **Status: written and statically validated, not yet applied.** `terraform
 > validate` passes against azurerm 4.81, the collector configuration validates
 > inside the collector image, and the managed-identity client is unit-tested

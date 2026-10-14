@@ -14,7 +14,8 @@ exception messages/stack traces and label malformed model responses as errors.
 Complete portfolio project, extended in October 2026 with observability, an answer-correctness
 judge, and reranking. Use `README.md` for the current implementation, baseline, evaluation
 results, and limitations. The Azure deployment is written and validated but **has never been
-applied**.
+applied**. Deployment is parked because the Azure student free account was unavailable
+(owner confirmation, 2026-10-14).
 
 ## What it demonstrates
 
@@ -26,8 +27,8 @@ applied**.
 - OpenTelemetry traces and metrics (GenAI semantic conventions) feeding a local Collector,
   Prometheus, Tempo and Grafana stack with alert rules, exercised with live LLM traffic.
 - Diagnosing latency from telemetry: the slow tail was provider rate limiting, not retrieval.
-- An LLM-as-judge for answer correctness, calibrated against labelled cases before use, with its
-  limits on real answers measured and stated.
+- An LLM-as-judge implementation with historical exploratory calibration and measured limits.
+  The corrected reference-supported-v2 rubric awaits fresh calibration; see docs/judge-rubric.md.
 - A cross-encoder reranking experiment that was benchmarked, rejected on evidence, and traced to a
   first-stage recall bottleneck.
 - Design of a keyless Azure deployment: managed identity instead of a model API key, and a
@@ -41,8 +42,8 @@ applied**.
 | AWS deployment procedure and infrastructure scope | `docs/deploy-aws.md` |
 | Telemetry design, live-run findings, dashboard and trace screenshots | `README.md` "Observability"; `src/evalgate_rag/telemetry.py`; `tests/test_telemetry.py`; `observability/`; `assets/grafana-dashboard.png`, `assets/tempo-trace.png` |
 | Reranking benchmark and the recall diagnosis | `README.md` "Reranking benchmark"; `scripts/benchmark_rerank.py`; `src/evalgate_rag/rerank.py` |
-| Judge design, calibration figures and caveats | `README.md` "Answer-correctness judge"; `src/evalgate_rag/judge.py`; `eval/judge_calibration_report.json`; `eval/judge_calibration.jsonl`; `eval/judge_real_answers.jsonl`; `tests/test_judge.py` |
-| Judge pass rate on the pipeline's answers | `eval/results/judged_baseline.json` |
+| Judge design, historical calibration figures and current caveats | `README.md` "Answer-correctness judge"; `docs/judge-rubric.md`; `src/evalgate_rag/judge.py`; `eval/judge_calibration_report.json`; `eval/judge_calibration.jsonl`; `eval/judge_real_answers.jsonl`; `tests/test_judge.py` |
+| Historical judge pass rate (old prompt, not current v2 validation) | `eval/results/judged_baseline.json` |
 | Azure design and its unapplied status | `docs/deploy-azure.md`; `terraform/azure/`; `src/evalgate_rag/auth.py` |
 | Deferred critic-loop work | `docs/future-work-critic-loop.md` |
 | Dependencies and quality tooling | `pyproject.toml` |
@@ -56,10 +57,11 @@ applied**.
 - Distinguish implemented retrieval and evaluation from deferred critic-loop work.
 - **Observability:** "instrumented with OpenTelemetry and verified with live LLM traffic in a local
   stack". The live run was a single 20-question run on a laptop.
-- **Judge:** "calibrated an LLM-as-judge on 80 labelled cases". Quote agreement from
-  `eval/judge_calibration_report.json`. If citing the real-answer figure, say the human labels
-  endorsed the judge's own first-pass verdicts and were not made blind to them. The 40
-  hand-written constructed labels are unreviewed.
+- **Judge:** describe implementation and historical exploratory calibration methodology. Read
+  `docs/judge-rubric.md` first. The original `eval/judge_calibration_report.json` is historical,
+  not validation of the corrected prompt. Do not quote its agreement as a current result.
+  A future `eval/judge_calibration_report_v2.json` must exist and be verified before use;
+  independent blind human labeling remains a separate requirement.
 - **Reranking:** frame it as an experiment that was measured and rejected, with the recall
   diagnosis as the finding. Do not frame it as an improvement shipped.
 - **Azure:** "designed" only, in a project description. Never "deployed", and never Azure in a
