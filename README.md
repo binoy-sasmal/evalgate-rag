@@ -436,22 +436,35 @@ runs was one of those: the judge is strict about complete lists, and
 borderline there. Those labels are unreviewed, so they may be what is wrong.
 
 **And then it met real answers.** Run over the pipeline's 20 real answers
-(`python eval/judge_answers.py --arm baseline`), it passed only 6. Reading the
-failures, that number is not trustworthy yet:
+(`python eval/judge_answers.py --arm baseline`), it passed 6. It failed all
+three questions whose gold article retrieval never finds (see the reranking
+benchmark), an independent cross-check, and it failed answers that state the
+reference's facts and then add claims the reference does not contain, such
+as the Article 100 fine for EU institutions next to the correct EUR 35
+million or 7 %. No constructed case covered that shape of answer.
 
-- It correctly failed all three questions whose gold article retrieval never
-  finds (see the reranking benchmark), an independent cross-check.
-- It also failed answers that were right and then added correct detail the
-  reference does not contain, for example the separate Article 100 fine for
-  EU institutions alongside the correct EUR 35 million or 7 %.
+A human reviewed all 20 in [`eval/judge_real_answers.jsonl`](eval/judge_real_answers.jsonl)
+and upheld every verdict, including that strictness: under this rubric, an
+answer that goes beyond the reference fails. Labelled real answers join the
+calibration as kind `real`. Judged afresh against those labels:
 
-No constructed case covered "correct, plus extra correct detail", so the
-calibration above overstates agreement on real answers. The fix is human
-labels on real answers, not tuning the prompt against the same 20 answers it
-would then be scored on. [`eval/judge_real_answers.jsonl`](eval/judge_real_answers.jsonl)
-holds them with the judge's verdict and reason; each one given a `label`
-joins the calibration as kind `real`, and agreement on that kind is the
-figure to trust.
+| Kind | Cases | Agreement |
+|---|---|---|
+| paraphrase | 20 | 0.95 |
+| perturbed (planted error) | 20 | 1.00 |
+| swapped (wrong question) | 20 | 1.00 |
+| real pipeline answers | 20 | 0.90 |
+| **all** | **80** | **0.963, Cohen's kappa 0.915** |
+
+Read the real-answer figure for what it is. The labels confirm the judge's
+own first-pass verdicts rather than being made blind to them, so 18 of 20 is
+the judge agreeing with an endorsed version of itself, not with an
+independent rater. The two it reversed, the systemic-risk threshold answer
+and the logging answer, are the borderline ones: each omits or adds detail
+relative to the reference without stating anything the reference
+contradicts. The judge is consistent on clear cases and unstable on those,
+and a blind second labelling would be the next step towards an independent
+agreement figure.
 
 **Reported, not gated.** `eval/check_regression.py` and `eval/baseline.json`
 are unchanged. The pass rate becomes a gate only after the labels are
