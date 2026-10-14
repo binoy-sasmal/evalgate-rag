@@ -1,7 +1,7 @@
 # Deploying evalgate-rag to Azure
 
-> **Parked (2026-10-14):** the Azure student free account was unavailable.
-> Deployment remains design-only until the owner chooses to resume.
+> **Azure deployment is deferred.** The configuration has not been deployed to
+> an Azure subscription. The verified deployment is on AWS.
 
 > **Status: written and statically validated, not yet applied.** `terraform
 > validate` passes against azurerm 4.81, the collector configuration validates

@@ -14,8 +14,7 @@ exception messages/stack traces and label malformed model responses as errors.
 Complete portfolio project, extended in October 2026 with observability, an answer-correctness
 judge, and reranking. Use `README.md` for the current implementation, baseline, evaluation
 results, and limitations. The Azure deployment is written and validated but **has never been
-applied**. Deployment is parked because the Azure student free account was unavailable
-(owner confirmation, 2026-10-14).
+applied**. Azure deployment is deferred; the verified deployment is on AWS.
 
 ## What it demonstrates
 
