@@ -1,0 +1,32 @@
+# Starting thresholds, not tuned ones: they are set from the service's known
+# shape (answers of ~30 tokens, a 60 s LLM timeout, a free-tier rate limit) and
+# should be revisited once there is real traffic to look at. No Alertmanager is
+# wired up; firing alerts are visible at http://localhost:9090/alerts.
+groups:
+  - name: evalgate-rag
+    rules:
+      - alert: QueryLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(rag_query_duration_seconds_bucket[5m]))) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: p95 time to answer a question has been above 10 s for 5 minutes
+
+      - alert: QueryErrorRateHigh
+        expr: |
+          sum(rate(rag_query_duration_seconds_count{error_type!=""}[5m]))
+            / sum(rate(rag_query_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 5% of questions have failed over 5 minutes
+
+      - alert: LLMRateLimited
+        expr: sum(rate(rag_llm_retries_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The LLM provider has been rate-limiting requests for 10 minutes

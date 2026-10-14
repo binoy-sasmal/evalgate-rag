@@ -3,6 +3,8 @@
 #   docker compose up -d db                 # just Postgres/pgvector
 #   docker compose up -d                    # + the API
 #   docker compose --profile tracing up -d  # + self-hosted Langfuse (v2, single container)
+#   TELEMETRY__ENABLED=true docker compose --profile observability up -d
+#                                           # + OpenTelemetry Collector, Prometheus, Tempo, Grafana
 #
 # Langfuse note: v2 runs as one container against Postgres (perfect for a demo).
 # Langfuse v3 needs ClickHouse/Redis/MinIO — use their official compose if you
@@ -45,6 +47,8 @@ services:
       LANGFUSE__HOST: http://langfuse:3000
       LANGFUSE__PUBLIC_KEY: ${LANGFUSE__PUBLIC_KEY:-}
       LANGFUSE__SECRET_KEY: ${LANGFUSE__SECRET_KEY:-}
+      TELEMETRY__ENABLED: ${TELEMETRY__ENABLED:-false}
+      TELEMETRY__OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8000:8000"
 
@@ -74,6 +78,51 @@ services:
       ENCRYPTION_KEY: 13b37b950950e940696a062ed523f3ca03ffedb3a500c49c195ba685bb0cd644
     ports:
       - "3000:3000"
+
+  # ---- optional observability profile -----------------------------------
+  # API --OTLP--> collector --> Tempo (traces) and Prometheus (metrics),
+  # both read by Grafana on http://localhost:3001 (3000 is Langfuse's).
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318" # OTLP/HTTP, for an API run on the host instead of in compose
+
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.4.0
+    depends_on:
+      - prometheus
+      - tempo
+    environment:
+      # Local demo only: no login, anonymous admin. Never expose this port.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
 
 volumes:
   pgdata:

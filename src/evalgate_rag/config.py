@@ -74,6 +74,17 @@ class LangfuseSettings(BaseModel):
     secret_key: str = ""
 
 
+class TelemetrySettings(BaseModel):
+    """OpenTelemetry traces and metrics, exported over OTLP/HTTP."""
+
+    enabled: bool = False
+    # Collector base URL, e.g. http://localhost:4318. Left unset, the exporters
+    # use the standard OTEL_EXPORTER_OTLP_* environment variables instead.
+    otlp_endpoint: str | None = None
+    service_name: str = "evalgate-rag"
+    export_interval_s: int = 15
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_nested_delimiter="__", extra="ignore")
 
@@ -81,6 +92,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = LLMSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
+    telemetry: TelemetrySettings = TelemetrySettings()
 
     retrieval_top_k: int = 4
     rrf_k: int = 60  # reciprocal-rank-fusion constant

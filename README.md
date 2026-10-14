@@ -239,6 +239,65 @@ which is the honest argument for deploying a side project at all:
   request *size* never succeeds on retry, and each attempt reserved more of the
   budget it was waiting to free.
 
+## Observability
+
+Langfuse shows what the model saw and said. The operations questions (how long
+did a question take, where did the time go, what did it cost in tokens, how
+often did it fail) go through OpenTelemetry instead, so they land in whatever
+stack already watches the rest of a system.
+
+```bash
+TELEMETRY__ENABLED=true docker compose --profile observability up -d
+# Grafana   http://localhost:3001   (dashboard "evalgate-rag", no login)
+# Prometheus http://localhost:9090  (alert rules under /alerts)
+```
+
+```
+API ──OTLP/HTTP──▶ OpenTelemetry Collector ──▶ Tempo        (traces)  ─┐
+                                           └─▶ Prometheus   (metrics) ─┴▶ Grafana
+```
+
+**Traces.** Every question is one trace: a `rag.query` span with a
+`rag.retrieval` child and a `chat <model>` child. The LLM span follows the
+OpenTelemetry GenAI semantic conventions (`gen_ai.request.model`,
+`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`), each rate-limit
+retry is an event on it, and a failure sets `error.type`. When Langfuse is on,
+the root span carries `langfuse.trace_id`, so a slow span leads to its prompt.
+
+**Metrics.**
+
+| Metric | Type | What it answers |
+|---|---|---|
+| `rag.query.duration` | histogram, s | Time to answer, and the failure ratio via `error.type` |
+| `rag.retrieval.duration` | histogram, s | Embed + dense + BM25 + fusion |
+| `gen_ai.client.operation.duration` | histogram, s | The LLM call, retries and backoff included |
+| `gen_ai.client.token.usage` | histogram, tokens | Spend by `gen_ai.token.type` (input / output) |
+| `rag.llm.retries` | counter | Requests retried after an HTTP 429 |
+
+**Alerts.** [`observability/alerts.yml`](observability/alerts.yml) defines three
+Prometheus rules: p95 time to answer above 10 s, more than 5% of questions
+failing, and sustained rate limiting. The thresholds are starting values chosen
+from the service's known shape, not tuned against production traffic, and no
+Alertmanager is wired up.
+
+Design choices worth knowing:
+
+- **No question, context or answer text on a span.** A trace backend has a wider
+  audience than a Langfuse project; it gets timings and token counts only. A
+  test asserts none of the three leak.
+- **Off by default, and injected.** `Telemetry` takes its providers as arguments
+  instead of using OpenTelemetry's process globals, so the unit suite asserts on
+  real spans and metrics through in-memory exporters, offline.
+- **One protocol out.** The API only speaks OTLP to one address. With
+  `TELEMETRY__OTLP_ENDPOINT` unset it honours the standard
+  `OTEL_EXPORTER_OTLP_*` variables, so a managed collector needs no code change.
+- **A dead collector cannot stop the API.** Export is batched in the background.
+
+What has and has not been exercised: the full chain was verified locally by
+driving the real pipeline and exporter with a stubbed LLM (40 questions, with
+injected 429s and 500s) and reading the results back from Prometheus, Tempo and
+Grafana. It has not yet run against the deployed instance or real traffic.
+
 ## UI
 
 A minimal Streamlit client for interacting with the API — a question box, a
@@ -303,12 +362,13 @@ This repository is built agent-first, and the workflow is part of the design:
 ## Project layout
 
 ```
-src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · api
+src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · telemetry · api
 scripts/              fetch_corpus · ingest · benchmark_chunking · generate_golden_set
 eval/                 run_eval (Ragas) · check_regression (the gate) · baseline.json
 data/                 golden_set.jsonl · corpus/ (EU AI Act, committed)
 tests/                offline unit tests + pgvector integration tests
 terraform/            single-instance AWS deployment (Free Tier)
+observability/        collector, Prometheus + alert rules, Tempo, Grafana dashboard
 docs/                 deploy-aws.md · future-work-critic-loop.md
 .github/workflows/    ci.yml · eval-gate.yml
 ```

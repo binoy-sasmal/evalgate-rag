@@ -53,6 +53,8 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 8. **The deployment has no authentication.** `terraform/` restricts `/query` by
    source CIDR only, and every call spends Groq quota the eval gate also draws
    on. Don't widen `allowed_cidr` to `0.0.0.0/0` without adding an API key check.
+9. **No prompt, context or answer text on an OpenTelemetry span.** Timings,
+   counts and token usage only; content belongs in Langfuse.
 
 ## Files agents most often need
 
@@ -61,6 +63,7 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 | `src/evalgate_rag/retrieval.py` | Hybrid BM25 + dense + RRF |
 | `src/evalgate_rag/chunking.py` | fixed / recursive / semantic strategies |
 | `src/evalgate_rag/pipeline.py` | prompt, LLM client, Langfuse tracing |
+| `src/evalgate_rag/telemetry.py` | OpenTelemetry spans and metrics; `observability/` is the local stack |
 | `eval/run_eval.py` | Ragas suite over the golden set |
 | `eval/check_regression.py` | the CI gate itself |
 | `.github/workflows/eval-gate.yml` | when/how the gate runs in CI |
