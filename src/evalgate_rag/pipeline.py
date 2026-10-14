@@ -141,13 +141,12 @@ class LLMClient:
         ) as span:
             try:
                 body = self._complete(system, user)
-            except httpx.HTTPStatusError as exc:
-                error_type = str(exc.response.status_code)
-                raise
-            except Exception as exc:
-                error_type = type(exc).__name__
-                raise
-            else:
+                try:
+                    answer = body["choices"][0]["message"]["content"]
+                    if not isinstance(answer, str):
+                        raise TypeError("Expected text")
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise ValueError("Invalid chat completion response") from exc
                 usage = body.get("usage") or {}
                 if body.get("model"):
                     span.set_attribute("gen_ai.response.model", body["model"])
@@ -155,7 +154,13 @@ class LLMClient:
                     span.set_attribute("gen_ai.usage.input_tokens", usage["prompt_tokens"])
                 if usage.get("completion_tokens") is not None:
                     span.set_attribute("gen_ai.usage.output_tokens", usage["completion_tokens"])
-                return body["choices"][0]["message"]["content"]
+                return answer
+            except httpx.HTTPStatusError as exc:
+                error_type = str(exc.response.status_code)
+                raise
+            except Exception as exc:
+                error_type = type(exc).__name__
+                raise
             finally:
                 if error_type is not None:
                     span.set_attribute("error.type", error_type)

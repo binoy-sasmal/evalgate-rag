@@ -19,14 +19,15 @@ pipeline answers showed the judge failing answers that were correct but
 carried extra correct detail, a kind of answer no constructed case covered.
 So eval/judge_real_answers.jsonl holds real answers for a human to label
 (`"label": "PASS"` or `"FAIL"`); every labelled one joins the calibration as
-kind `real`, and agreement on that kind is the number to trust.
+kind `real`. Existing real labels were not blind; agreement is exploratory,
+not independent human validation. See docs/judge-rubric.md.
 
 Verdicts are cached in eval/.cache/ (keyed by case, invalidated when the
 judge prompt, model or calibration set changes), so a run stopped by a rate
 limit resumes without re-spending tokens.
 
 Usage:
-    python eval/calibrate_judge.py [--run 1] [--out eval/judge_calibration_report.json]
+    python eval/calibrate_judge.py [--run 1] [--out eval/judge_calibration_report_v2.json]
 
 `--run N` keeps a separate cache per run number, so two runs over the same
 cases measure the judge's agreement with itself.
@@ -42,7 +43,14 @@ import pathlib
 import sys
 
 from evalgate_rag.config import get_settings, judge_llm_settings
-from evalgate_rag.judge import JUDGE_SYSTEM_PROMPT, AnswerJudge, JudgeParseError, agreement_report
+from evalgate_rag.judge import (
+    JUDGE_RUBRIC_VERSION,
+    JUDGE_SYSTEM_PROMPT,
+    JUDGE_TEMPLATE,
+    AnswerJudge,
+    JudgeParseError,
+    agreement_report,
+)
 from evalgate_rag.pipeline import LLMClient
 
 CALIBRATION_SET = pathlib.Path("eval/judge_calibration.jsonl")
@@ -54,7 +62,7 @@ CACHE_DIR = pathlib.Path("eval/.cache")
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", type=int, default=1)
-    parser.add_argument("--out", default="eval/judge_calibration_report.json")
+    parser.add_argument("--out", default="eval/judge_calibration_report_v2.json")
     args = parser.parse_args()
 
     cfg = get_settings()
@@ -73,7 +81,13 @@ def main() -> None:
     # does not re-spend tokens on cases already judged.
     fingerprint = hashlib.sha256(
         json.dumps(
-            [JUDGE_SYSTEM_PROMPT, judge_cfg.model, judge_cfg.reasoning_effort], sort_keys=True
+            [
+                JUDGE_RUBRIC_VERSION,
+                JUDGE_SYSTEM_PROMPT,
+                JUDGE_TEMPLATE,
+                judge_cfg.model_dump(exclude={"api_key"}),
+            ],
+            sort_keys=True,
         ).encode()
     ).hexdigest()[:16]
     cache_path = CACHE_DIR / f"judge_calibration_run{args.run}.json"
@@ -83,13 +97,13 @@ def main() -> None:
 
     judge = AnswerJudge(LLMClient(judge_cfg))
     for case in cases:
-        content = hashlib.sha256(
-            f"{case['golden_id']}|{case['question']}|{case['candidate']}".encode()
-        ).hexdigest()[:12]
-        cached = cache.get(case["case_id"])
-        if cached is not None and cached.setdefault("content", content) == content:
-            continue
         ref = golden[case["golden_id"]]["ground_truth"]
+        content = hashlib.sha256(
+            json.dumps([case["question"], ref, case["candidate"]], ensure_ascii=False).encode()
+        ).hexdigest()
+        cached = cache.get(case["case_id"])
+        if cached is not None and cached.get("content") == content:
+            continue
         try:
             v = judge.judge(case["question"], ref, case["candidate"])
             cache[case["case_id"]] = {"passed": v.passed, "reason": v.reason, "content": content}
@@ -133,6 +147,9 @@ def main() -> None:
     report = {
         "date": dt.date.today().isoformat(),
         "judge_model": judge_cfg.model,
+        "rubric_version": JUDGE_RUBRIC_VERSION,
+        "judge_fingerprint": fingerprint,
+        "validation_status": "exploratory_not_independent_human_validation",
         "reasoning_effort": judge_cfg.reasoning_effort,
         "run": args.run,
         "cases": len(cases),

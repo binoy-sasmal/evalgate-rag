@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 from .pipeline import LLMClient
 
+JUDGE_RUBRIC_VERSION = "reference-supported-v2"
+
 JUDGE_SYSTEM_PROMPT = """You grade answers to questions about the EU Artificial \
 Intelligence Act. You are given a question, a reference answer that is correct \
 by definition, and a candidate answer. Judge the candidate ONLY against the \
@@ -28,12 +30,16 @@ reference; do not use outside knowledge to add or remove requirements.
 
 PASS when the candidate states the reference's central facts that answer the \
 question (articles, numbers, thresholds, actors, conditions, yes/no) and \
-contains nothing that contradicts the reference. Different wording, less \
-detail, or extra correct context are fine.
+contains no factual claims unsupported by the reference. Different wording \
+and omission of nonessential detail are fine. Extra factual claims fail even \
+if they might be correct outside this reference: this rubric measures \
+reference-supported correctness, not general factual truth.
 
 FAIL when the candidate gets any central fact wrong (a different number, \
 article, actor, condition or scope), contradicts the reference, answers a \
-different question, refuses, or omits the central fact the question asks for.
+different question, refuses, omits the central fact the question asks for, \
+or adds a factual claim not supported by the reference. Explain unsupported \
+additions as unsupported, not necessarily false.
 
 Respond with a JSON object only:
 {"verdict": "PASS" or "FAIL", "reason": "<one sentence naming the deciding fact>"}"""

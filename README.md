@@ -406,6 +406,14 @@ reordering.
 
 ## Answer-correctness judge
 
+**Current status:** the prompt now uses `reference-supported-v2`, matching the
+documented strict review policy: additional factual claims must be supported by
+the reference. The figures below are **historical, from the previous prompt**,
+which allowed extra correct context and conflicted with that policy. They do
+not validate the corrected judge. No v2 live calibration has been run yet.
+Labels and old results are preserved; see [rubric and validation plan](docs/judge-rubric.md).
+The default calibration output is now `eval/judge_calibration_report_v2.json`.
+
 Ragas' faithfulness asks whether an answer is supported by what was
 retrieved, which a confidently wrong answer built on the wrong chunk passes.
 [`judge.py`](src/evalgate_rag/judge.py) asks whether the answer states what

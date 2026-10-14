@@ -23,7 +23,7 @@ from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.metrics import MeterProvider
-from opentelemetry.trace import Span, SpanKind, TracerProvider
+from opentelemetry.trace import Span, SpanKind, StatusCode, TracerProvider
 
 from .config import TelemetrySettings
 
@@ -103,10 +103,22 @@ class Telemetry:
         kind: SpanKind = SpanKind.INTERNAL,
         attributes: dict[str, Any] | None = None,
     ) -> Iterator[Span]:
-        """Current-span context manager. An exception escaping the block is
-        recorded on the span and marks it as an error."""
-        with self._tracer.start_as_current_span(name, kind=kind, attributes=attributes) as span:
-            yield span
+        """Mark failures without exporting exception messages or stack traces."""
+        with self._tracer.start_as_current_span(
+            name,
+            kind=kind,
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                yield span
+            except Exception as exc:
+                # HTTP callers may already have supplied a status code.
+                if not (getattr(span, "attributes", None) or {}).get("error.type"):
+                    span.set_attribute("error.type", type(exc).__name__)
+                span.set_status(StatusCode.ERROR)
+                raise
 
     def record_query(self, duration_s: float, error_type: str | None = None) -> None:
         self._query_duration.record(duration_s, _with_error({}, error_type))

@@ -4,6 +4,13 @@ This is a routing document for job-application work. The repository remains the 
 
 ## Status
 
+Review correction: the judge now uses `reference-supported-v2`; its previous
+prompt allowed extra correct context despite stricter human labels. Existing
+calibration figures are historical and must not be presented as validation of
+the corrected prompt. A fresh full calibration and independent blind labeling
+remain pending. See `docs/judge-rubric.md`. Telemetry failure paths now suppress
+exception messages/stack traces and label malformed model responses as errors.
+
 Complete portfolio project, extended in October 2026 with observability, an answer-correctness
 judge, and reranking. Use `README.md` for the current implementation, baseline, evaluation
 results, and limitations. The Azure deployment is written and validated but **has never been

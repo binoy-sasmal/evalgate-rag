@@ -190,3 +190,45 @@ def test_enabled_telemetry_builds_otlp_exporters_without_connecting():
 QUERY_DURATION = "rag.query.duration"
 LLM_DURATION = "gen_ai.client.operation.duration"
 TOKEN_USAGE = "gen_ai.client.token.usage"
+
+
+@pytest.mark.parametrize("stage", ["retrieval", "llm"])
+def test_exception_content_never_reaches_telemetry(rec, stage, monkeypatch):
+    secret = "PRIVATE_QUESTION_CONTEXT_ANSWER"
+    original = RuntimeError(secret)
+
+    def fail(*args, **kwargs):
+        raise original
+
+    pipeline = _pipeline(rec, fail if stage == "llm" else lambda r: httpx.Response(200))
+    if stage == "retrieval":
+        monkeypatch.setattr(pipeline._retriever, "retrieve", fail)
+    with pytest.raises(RuntimeError) as raised:
+        pipeline.answer(secret)
+    assert raised.value is original
+    for span in rec.spans().values():
+        assert secret not in span.to_json()
+        if stage == "llm" and span.name == "rag.retrieval":
+            assert span.status.status_code is StatusCode.UNSET
+        else:
+            assert span.status.status_code is StatusCode.ERROR
+            assert span.attributes["error.type"] == "RuntimeError"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"choices": []},
+        {"choices": [{}]},
+        {"choices": [{"message": {"content": None}}]},
+        {"choices": [{"message": {"content": ["not text"]}}]},
+    ],
+)
+def test_malformed_success_response_is_an_observed_failure(rec, body):
+    pipeline = _pipeline(rec, lambda request: httpx.Response(200, json=body))
+    with pytest.raises(ValueError, match="Invalid chat completion response"):
+        pipeline.answer("What fines apply?")
+    assert rec.points(LLM_DURATION)[0].attributes["error.type"] == "ValueError"
+    assert rec.points(QUERY_DURATION)[0].attributes["error.type"] == "ValueError"
+    assert rec.spans()["chat test-model"].status.status_code is StatusCode.ERROR
