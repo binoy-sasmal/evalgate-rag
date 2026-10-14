@@ -53,7 +53,10 @@ ui = [
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
-    "opentelemetry-sdk>=1.30",  # in-memory span exporter and metric reader for tests
+    # The suite asserts on real spans and metrics through in-memory exporters,
+    # and builds the OTLP exporter to prove start-up never touches the network.
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
     # Minor-bounded: ruff holds formatter output stable within a minor but not
     # across one, so an unpinned `>=` lets CI red the build on code nobody
     # touched. 0.16 did exactly that -- it began formatting Python code blocks
