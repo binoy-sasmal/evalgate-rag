@@ -18,6 +18,7 @@ ruff check . && ruff format --check .          # lint
 mypy src/                                      # types
 python scripts/benchmark_chunking.py --hash    # offline retrieval benchmark
 python scripts/benchmark_rerank.py             # reranking vs hybrid (local, no tokens)
+python scripts/benchmark_semantic_cache.py     # cache threshold sweep (local, no tokens)
 python eval/calibrate_judge.py                 # judge agreement on labelled cases (judge tokens)
 python eval/run_eval.py && python eval/check_regression.py   # full eval gate (costs tokens)
 cd terraform && terraform validate && terraform fmt -check -recursive   # IaC checks (AWS)
@@ -79,6 +80,7 @@ anywhere embeddings are needed. Retrieval is BM25 + dense fused with RRF
 | `eval/check_regression.py` | the CI gate itself |
 | `src/evalgate_rag/judge.py` | answer-correctness judge; `eval/calibrate_judge.py` calibrates it |
 | `src/evalgate_rag/rerank.py` | optional cross-encoder; `scripts/benchmark_rerank.py` measures it |
+| `src/evalgate_rag/semantic_cache.py` | opt-in answer cache with false-hit guards; `scripts/benchmark_semantic_cache.py` picks the threshold |
 | `.github/workflows/eval-gate.yml` | when/how the gate runs in CI |
 | `terraform/` | single-EC2 AWS deployment; `docs/deploy-aws.md` is the runbook |
 | `terraform/azure/` | Container Apps deployment, not yet applied; `docs/deploy-azure.md` |

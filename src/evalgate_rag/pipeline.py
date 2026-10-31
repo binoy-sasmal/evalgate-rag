@@ -7,6 +7,7 @@ unit tests and local runs never require a Langfuse instance or a collector.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import time
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from opentelemetry.trace import SpanKind
 from .auth import ManagedIdentityToken
 from .config import LangfuseSettings, LLMSettings
 from .retrieval import HybridRetriever
+from .semantic_cache import SemanticCache
 from .store import ScoredChunk
 from .telemetry import Telemetry
 
@@ -50,6 +52,20 @@ class RAGResult:
     answer: str
     contexts: list[ScoredChunk]
     trace_id: str | None = None
+    cached: bool = False
+
+
+_PROMPT_HASH = hashlib.sha256((SYSTEM_PROMPT + PROMPT_TEMPLATE).encode()).hexdigest()[:16]
+
+
+def cache_namespace(model: str, top_k: int) -> str:
+    """Everything that changes an answer for the same question and corpus.
+
+    A cached answer is only valid under the model, prompt and top_k that
+    produced it, so they form the cache key's namespace. The corpus is not in
+    it: the cache is in-process and re-ingesting restarts the service.
+    """
+    return f"{model}|{_PROMPT_HASH}|k={top_k}"
 
 
 def _bearer_auth(
@@ -321,12 +337,14 @@ class RAGPipeline:
         tracer: Tracer,
         top_k: int = 4,
         telemetry: Telemetry | None = None,
+        cache: SemanticCache | None = None,
     ) -> None:
         self._retriever = retriever
         self._llm = llm
         self._tracer = tracer
         self._top_k = top_k
         self._telemetry = telemetry or Telemetry()
+        self._cache = cache
 
     def answer(self, question: str, top_k: int | None = None) -> RAGResult:
         """Answer one question. `top_k` overrides the configured default for
@@ -338,8 +356,18 @@ class RAGPipeline:
         k = self._top_k if top_k is None else top_k
         started = time.perf_counter()
         error_type: str | None = None
+        namespace = cache_namespace(self._llm._cfg.model, k)
         with self._telemetry.span("rag.query", attributes={"rag.top_k": k}) as span:
             try:
+                if self._cache is not None:
+                    with self._telemetry.span("rag.cache.lookup") as cache_span:
+                        hit = self._cache.lookup(question, namespace)
+                        if hit is not None:
+                            cache_span.set_attribute("rag.cache.similarity", hit.similarity)
+                    self._telemetry.record_cache_lookup(hit is not None)
+                    span.set_attribute("rag.cache.hit", hit is not None)
+                    if hit is not None:
+                        return RAGResult(answer=hit.answer, contexts=hit.contexts, cached=True)
                 with self._telemetry.span("rag.retrieval") as retrieval_span:
                     retrieval_started = time.perf_counter()
                     contexts = self._retriever.retrieve(question, top_k=k)
@@ -358,6 +386,8 @@ class RAGPipeline:
                     # Lets an operator jump from a slow span to the Langfuse
                     # trace that holds the prompt and answer.
                     span.set_attribute("langfuse.trace_id", trace_id)
+                if self._cache is not None:
+                    self._cache.store(question, namespace, answer, contexts)
                 return RAGResult(answer=answer, contexts=contexts, trace_id=trace_id)
             except Exception as exc:
                 error_type = type(exc).__name__

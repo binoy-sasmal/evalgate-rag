@@ -406,6 +406,60 @@ its gold article (Article 50, rank 15) within reach, and the cross-encoder
 did not lift it. The next retrieval improvement is first-stage recall, not
 reordering.
 
+## Semantic cache
+
+An opt-in cache (`CACHE__ENABLED=true`, `src/evalgate_rag/semantic_cache.py`)
+answers a reworded repeat of an earlier question from memory instead of calling
+the LLM, saving latency and free-tier tokens. The incoming question is embedded
+with the same local model as retrieval and compared with cached questions by
+cosine similarity.
+
+The risk is a **false hit**: a confident answer served to a different question.
+Embeddings alone cannot prevent that here, so a hit also requires:
+
+- **identical legal anchors**: the numbers and roman numerals after Article,
+  Annex, Chapter and similar (`Article 99(3)` never matches `Article 99(4)`);
+- **identical negation**: "prohibited" never matches "not prohibited";
+- **the same namespace**: model, prompt hash and `top_k`, so a configuration
+  change can never serve an answer produced under the old one.
+
+Refusals and answers without retrieved context are never cached; entries expire
+after `CACHE__TTL_S` and are LRU-bounded at `CACHE__MAX_ENTRIES`. The cache is
+in-process per replica and empty after a restart. Hits are visible as
+`cached: true` in the `/query` response, a `rag.cache.hit` span attribute and
+the `rag.cache.lookups{rag.cache.result=hit|miss}` counter (no question text on
+spans). **The eval gate never uses it**: `eval/run_eval.py` builds its pipeline
+without a cache.
+
+### Choosing the threshold
+
+`python scripts/benchmark_semantic_cache.py` sweeps the threshold over 40
+labelled pairs in `data/cache_eval_pairs.jsonl`: 20 rewordings of golden-set
+questions that should hit, and 20 near-misses that must not (changed article or
+annex numbers, flipped negation, and same-topic questions with a different
+meaning). Local embeddings, no tokens.
+
+| Threshold | Rewordings served from cache | False hits | False hits, embedding only |
+|---:|---:|---:|---:|
+| 0.92 | 100% | 5 | 11 |
+| 0.94 | 95% | 3 | 8 |
+| 0.95 | 95% | 2 | 6 |
+| **0.96** | **85%** | **0** | 3 |
+| 0.97 | 75% | 0 | 2 |
+| 0.98 | 60% | 0 | 2 |
+
+<sub>fastembed BAAI/bge-small-en-v1.5, measured 2026-10-31. Full sweep: `eval/semantic_cache_report.md`.</sub>
+
+**The default is 0.96, the lowest threshold with zero false hits on this set.**
+The last column is the finding: without the anchor and negation guards, even a
+0.98 threshold serves two wrong answers, because "Article 5" vs "Article 6" and
+"prohibited" vs "not prohibited" embed almost identically. Similarity tuning
+alone cannot close that gap.
+
+Limits: the pairs were written by one author and are `UNREVIEWED`; the threshold
+was chosen on the same 40 pairs it is reported on (no held-out split); and
+traffic-level hit rate is unmeasured because the service has no real users.
+
 ## Answer-correctness judge
 
 **Current status:** the prompt now uses `reference-supported-v2`, matching the
@@ -508,11 +562,11 @@ This repository is built agent-first, and the workflow is part of the design:
 ## Project layout
 
 ```
-src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · rerank · judge · auth · telemetry · api
-scripts/              fetch_corpus · ingest · benchmark_chunking · benchmark_rerank · generate_golden_set
+src/evalgate_rag/     config · chunking · embeddings · store · retrieval · pipeline · rerank · semantic_cache · judge · auth · telemetry · api
+scripts/              fetch_corpus · ingest · benchmark_chunking · benchmark_rerank · benchmark_semantic_cache · generate_golden_set
 eval/                 run_eval (Ragas) · check_regression (the gate) · baseline.json
                       calibrate_judge · judge_answers · judge label sets
-data/                 golden_set.jsonl · corpus/ (EU AI Act, committed)
+data/                 golden_set.jsonl · cache_eval_pairs.jsonl · corpus/ (EU AI Act, committed)
 tests/                offline unit tests + pgvector integration tests
 terraform/            single-instance AWS deployment (Free Tier)
 terraform/azure/      Container Apps + Azure OpenAI deployment (validated, not yet applied)

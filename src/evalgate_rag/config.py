@@ -111,6 +111,17 @@ class RerankSettings(BaseModel):
     cache_dir: str | None = None
 
 
+class CacheSettings(BaseModel):
+    """Semantic answer cache (semantic_cache.py). Off by default, and never used
+    by the evaluation gate. The threshold default comes from
+    scripts/benchmark_semantic_cache.py; re-run it before changing the value."""
+
+    enabled: bool = False
+    threshold: float = 0.96
+    max_entries: int = 1000
+    ttl_s: float = 3600.0
+
+
 class TelemetrySettings(BaseModel):
     """OpenTelemetry traces and metrics, exported over OTLP/HTTP."""
 
@@ -132,6 +143,7 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = TelemetrySettings()
     rerank: RerankSettings = RerankSettings()
     judge: JudgeSettings = JudgeSettings()
+    cache: CacheSettings = CacheSettings()
 
     retrieval_top_k: int = 4
     rrf_k: int = 60  # reciprocal-rank-fusion constant

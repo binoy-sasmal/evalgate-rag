@@ -12,6 +12,7 @@ from .embeddings import make_embedder
 from .pipeline import LLMClient, RAGPipeline, Tracer
 from .rerank import make_reranker
 from .retrieval import HybridRetriever
+from .semantic_cache import SemanticCache
 from .store import PgVectorStore
 from .telemetry import make_telemetry
 
@@ -32,6 +33,8 @@ class QueryResponse(BaseModel):
     answer: str
     contexts: list[ContextOut]
     trace_id: str | None
+    # True when the answer was served by the semantic cache (no LLM call).
+    cached: bool = False
 
 
 def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = None) -> FastAPI:
@@ -55,6 +58,16 @@ def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = N
             )
             retriever.refresh_bm25()
             telemetry = make_telemetry(cfg.telemetry)
+            cache = (
+                SemanticCache(
+                    embedder,
+                    threshold=cfg.cache.threshold,
+                    max_entries=cfg.cache.max_entries,
+                    ttl_s=cfg.cache.ttl_s,
+                )
+                if cfg.cache.enabled
+                else None
+            )
             app.state.store = store
             app.state.pipeline = RAGPipeline(
                 retriever,
@@ -62,6 +75,7 @@ def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = N
                 Tracer(cfg.langfuse),
                 top_k=cfg.retrieval_top_k,
                 telemetry=telemetry,
+                cache=cache,
             )
         yield
         if telemetry is not None:
@@ -115,6 +129,7 @@ def build_app(settings: Settings | None = None, pipeline: RAGPipeline | None = N
                 for c in result.contexts
             ],
             trace_id=result.trace_id,
+            cached=getattr(result, "cached", False),
         )
 
     return app

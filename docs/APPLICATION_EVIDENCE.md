@@ -30,6 +30,8 @@ applied**. Azure deployment is deferred; the verified deployment is on AWS.
   The corrected reference-supported-v2 rubric awaits fresh calibration; see docs/judge-rubric.md.
 - A cross-encoder reranking experiment that was benchmarked, rejected on evidence, and traced to a
   first-stage recall bottleneck.
+- An opt-in semantic answer cache with false-hit guards (legal anchors, negation, namespace by
+  model, prompt and top_k), its threshold chosen by a sweep over 40 labelled question pairs.
 - Design of a keyless Azure deployment: managed identity instead of a model API key, and a
   database password kept out of Terraform state. Design only.
 
@@ -40,6 +42,7 @@ applied**. Azure deployment is deferred; the verified deployment is on AWS.
 | Current architecture, results, and limitations | `README.md` |
 | AWS deployment procedure and infrastructure scope | `docs/deploy-aws.md` |
 | Telemetry design, live-run findings, dashboard and trace screenshots | `README.md` "Observability"; `src/evalgate_rag/telemetry.py`; `tests/test_telemetry.py`; `observability/`; `assets/grafana-dashboard.png`, `assets/tempo-trace.png` |
+| Semantic cache: design, guards, threshold sweep and limits | `README.md` "Semantic cache"; `src/evalgate_rag/semantic_cache.py`; `tests/test_semantic_cache.py`; `scripts/benchmark_semantic_cache.py`; `data/cache_eval_pairs.jsonl`; `eval/semantic_cache_report.md` |
 | Reranking benchmark and the recall diagnosis | `README.md` "Reranking benchmark"; `scripts/benchmark_rerank.py`; `src/evalgate_rag/rerank.py` |
 | Judge design, historical calibration figures and current caveats | `README.md` "Answer-correctness judge"; `docs/judge-rubric.md`; `src/evalgate_rag/judge.py`; `eval/judge_calibration_report.json`; `eval/judge_calibration.jsonl`; `eval/judge_real_answers.jsonl`; `tests/test_judge.py` |
 | Historical judge pass rate (old prompt, not current v2 validation) | `eval/results/judged_baseline.json` |
@@ -63,6 +66,10 @@ applied**. Azure deployment is deferred; the verified deployment is on AWS.
   independent blind human labeling remains a separate requirement.
 - **Reranking:** frame it as an experiment that was measured and rejected, with the recall
   diagnosis as the finding. Do not frame it as an improvement shipped.
+- **Semantic cache:** "added a semantic answer cache that serves reworded repeat questions without
+  an LLM call; on 40 labelled pairs it served 85% of rewordings with zero wrong answers at the
+  chosen threshold, and guards for article numbers and negation were required for that zero".
+  Always keep the denominator, and that the pairs are single-author and unreviewed.
 - **Azure:** "designed" only, in a project description. Never "deployed", and never Azure in a
   skills line.
 
@@ -79,6 +86,9 @@ applied**. Azure deployment is deferred; the verified deployment is on AWS.
 - The judge as a regression gate. Its pass rate is reported, not gated.
 - Independent human agreement for the judge on real answers.
 - Reranking as an improvement to answer quality.
+- Semantic-cache savings on real traffic, token or cost reductions, or a production hit rate: the
+  service has no real users and only the labelled-pair sweep exists.
+- A held-out validation of the cache threshold: it was chosen on the same 40 pairs.
 
 ## Verification rule
 

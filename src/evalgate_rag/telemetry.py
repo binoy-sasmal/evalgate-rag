@@ -90,6 +90,11 @@ class Telemetry:
             description="Tokens per LLM call, split by gen_ai.token.type",
             explicit_bucket_boundaries_advisory=_TOKEN_BUCKETS,
         )
+        self._cache_lookups = meter.create_counter(
+            "rag.cache.lookups",
+            unit="{lookup}",
+            description="Semantic cache lookups, split by rag.cache.result (hit / miss)",
+        )
         self._llm_retries = meter.create_counter(
             "rag.llm.retries",
             unit="{retry}",
@@ -138,6 +143,9 @@ class Telemetry:
         for token_type, count in (("input", input_tokens), ("output", output_tokens)):
             if count is not None:
                 self._llm_tokens.record(count, {**attributes, "gen_ai.token.type": token_type})
+
+    def record_cache_lookup(self, hit: bool) -> None:
+        self._cache_lookups.add(1, {"rag.cache.result": "hit" if hit else "miss"})
 
     def record_llm_retry(self, attributes: dict[str, Any], reason: str) -> None:
         self._llm_retries.add(1, {**attributes, "reason": reason})
